@@ -28,7 +28,7 @@ jobs:
         run: pip install ruff
 
       - name: Run Ruff
-        run: ruff check server/
+        run: ruff check app/
 
   # ── Build & push Docker image ──────────────────────────────────────────────
   build:
