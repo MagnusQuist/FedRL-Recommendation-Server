@@ -14,22 +14,18 @@ class FoodItem(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+    item_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, comment="Item ID, e.g. 'Ra00001-DK'.")
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     category: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
 
     # Sustainability
-    co2e_score: Mapped[float] = mapped_column(
+    co2e_emission_tonnes: Mapped[float] = mapped_column(
         Float, nullable=False,
-        comment="Normalised sustainability score 0–1. Higher = more sustainable."
-    )
-    co2e_kg_per_kg: Mapped[float] = mapped_column(
-        Float, nullable=False,
-        comment="Raw CO2e in kg per kg of product (Poore & Nemecek 2018)."
+        comment="CO2e emission in tonnes."
     )
 
     # Commerce
     price: Mapped[float] = mapped_column(Float, nullable=False, comment="Price in DKK.")
-    unit: Mapped[str] = mapped_column(String(50), nullable=False, comment="e.g. '1L', '500g'.")
 
     # Pre-computed greener alternatives in same category
     alternative_ids: Mapped[list[uuid.UUID]] = mapped_column(

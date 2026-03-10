@@ -5,18 +5,12 @@ from pydantic import BaseModel, Field, ConfigDict
 
 
 class FoodItemBase(BaseModel):
+    item_id: str = Field(..., description="Item ID, e.g. 'Ra00001-DK'.")
     name: str = Field(..., description="Display name, e.g. 'Oat Milk 1L'.")
     category: str = Field(..., description="Food category, e.g. 'dairy_alternatives'.")
-    co2e_score: float = Field(..., ge=0.0, le=1.0, description="Normalised score 0–1. Higher = more sustainable.")
-    co2e_kg_per_kg: float = Field(..., ge=0.0, description="Raw CO2e in kg per kg (Poore & Nemecek 2018).")
+    co2e_emission_tonnes: float = Field(..., ge=0.0, description="CO2e emission in tonnes.")
     price: float = Field(..., ge=0.0, description="Price in DKK.")
-    unit: str = Field(..., description="Unit of sale, e.g. '1L', '500g'.")
     alternative_ids: list[uuid.UUID] = Field(default_factory=list, description="IDs of greener alternatives in same category.")
-
-
-class FoodItemCreate(FoodItemBase):
-    pass
-
 
 class FoodItemRead(FoodItemBase):
     model_config = ConfigDict(from_attributes=True)
