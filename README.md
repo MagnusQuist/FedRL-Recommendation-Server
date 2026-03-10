@@ -52,7 +52,26 @@ Or run migrations inside the container:
 docker compose exec server alembic upgrade head
 ```
 
-### 4. Verify
+### 4. Seed the food catalogue
+
+The catalogue is seeded from `data/seed_catalogue.json` via `app/seed_catalogue.py`.
+
+```bash
+# With Docker Compose running:
+docker compose exec server python -m app.seed_catalogue
+```
+
+The script:
+- Reads `data/seed_catalogue.json` (structure: `{ "items": [ ... ] }`).
+- Maps each item to the `FoodItem` ORM model in `app/schemas/food_item.py`:
+  - `id` → `item_id`
+  - `name` → `name`
+  - `category` → `category`
+  - `total_co2e` → `co2e_emission_tonnes`
+  - `price` → `price`
+  - `greener_alternative_ids` → `alternative_ids` (resolved to UUIDs in a second pass).
+
+### 5. Verify
 
 ```bash
 curl http://localhost:8000/health
@@ -63,6 +82,48 @@ curl http://localhost:8000/catalogue
 ```
 
 Interactive API docs: **http://localhost:8000/docs**
+
+---
+
+## Changing the schema safely
+
+The database schema is owned by SQLAlchemy models (`app/schemas/food_item.py`) + Alembic migrations (`alembic/versions/`).
+
+**Typical workflow to change the schema:**
+
+1. **Edit the ORM model**
+   - Change `FoodItem` (or other models) in `app/schemas/food_item.py` — add/remove/rename columns, adjust types, etc.
+
+2. **Update Pydantic models**
+   - Mirror the changes in `app/models/food_item.py` so API responses match the DB.
+
+3. **Create a new migration (on the host)**
+   - With a local virtualenv:
+
+   ```bash
+   source .venv/bin/activate
+   export DATABASE_URL=postgresql+asyncpg://fedrl:fedrl@localhost:5432/fedrl
+   alembic revision -m "Describe your change" --autogenerate
+   ```
+
+   - Review the generated file under `alembic/versions/` and tweak if needed.
+
+4. **Apply migrations**
+
+   ```bash
+   alembic upgrade head
+   # or, after rebuilding the image so migrations are copied in:
+   # docker compose exec server alembic upgrade head
+   ```
+
+5. **Reseed if necessary**
+   - If the change affects the catalogue shape, update `app/seed_catalogue.py` to map the JSON fields to the new columns, then rerun:
+
+   ```bash
+   docker compose exec server python -m app.seed_catalogue
+   ```
+
+This keeps the code, migrations, and running database in sync while keeping seeding a single, repeatable command.
 
 ---
 
