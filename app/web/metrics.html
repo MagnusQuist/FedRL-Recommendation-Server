@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>FedRL – Dev Metrics</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="/dev/static/css/styles.css" />
+  </head>
+  <body>
+    <header>
+      <div class="title-block">
+        <h1>
+          FedRL Training Metrics
+        </h1>
+        <p class="subtitle">
+          Live view of the federated learning queue, round timeout and backbone versions.
+        </p>
+      </div>
+      <div class="status-row">
+        <span class="pill">
+          <span id="status-dot" class="dot warn"></span>
+          <span id="status-label">Waiting for socket…</span>
+        </span>
+        <span class="pill">
+          WebSocket <span class="mono">/dev/metrics/ws</span>
+        </span>
+      </div>
+    </header>
+
+    <div class="layout">
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Aggregation round</div>
+            <div class="card-subtitle">Queue state and timeout</div>
+          </div>
+        </div>
+        <div class="grid">
+          <div class="metric">
+            <div class="metric-label">Queued clients (this round)</div>
+            <div id="queued-count" class="metric-value">–</div>
+            <div id="queued-clients" class="metric-helper mono muted"></div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Rounds completed</div>
+            <div id="rounds-completed" class="metric-value">–</div>
+            <div class="metric-helper">Since server start</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Min clients / round</div>
+            <div id="min-clients" class="metric-value">–</div>
+            <div class="metric-helper">From <span class="mono">FL_MIN_CLIENTS_PER_ROUND</span></div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Round timeout</div>
+            <div id="round-timeout" class="metric-value">–</div>
+            <div id="round-time-remaining" class="metric-helper"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Backbone version</div>
+            <div class="card-subtitle">Persisted global model in Postgres</div>
+          </div>
+        </div>
+        <div id="backbone-present">
+          <div class="grid">
+            <div class="metric">
+              <div class="metric-label">Current version</div>
+              <div id="bb-version" class="metric-value">–</div>
+              <div id="bb-algorithm" class="metric-helper mono"></div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Clients in last round</div>
+              <div id="bb-clients" class="metric-value">–</div>
+              <div class="metric-helper">Contributed uploads</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Total interactions</div>
+              <div id="bb-interactions" class="metric-value mono">–</div>
+              <div class="metric-helper">Σ n<sub>k</sub> for last round</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Last updated</div>
+              <div id="bb-updated" class="metric-value" style="font-size:14px;">–</div>
+              <div id="bb-updated-raw" class="metric-helper mono"></div>
+            </div>
+          </div>
+        </div>
+        <div id="backbone-empty" class="muted" style="display:none; font-size:13px; margin-top:6px;">
+          No backbone versions have been persisted yet. Run a seed or let a round complete.
+        </div>
+      </section>
+    </div>
+
+    <div class="toolbar">
+      <span class="timestamp">Last update: <span id="updated-at">never</span></span>
+      <button id="reconnect-btn" type="button">
+        Reconnect socket
+      </button>
+    </div>
+
+    <script>
+      const STATUS_DOT = document.getElementById("status-dot");
+      const STATUS_LABEL = document.getElementById("status-label");
+      const RECONNECT_BTN = document.getElementById("reconnect-btn");
+
+      let socket = null;
+
+      function setStatus(state, text) {
+        STATUS_DOT.classList.remove("ok", "warn", "danger");
+        STATUS_DOT.classList.add(state);
+        STATUS_LABEL.textContent = text;
+      }
+
+      function fmtSeconds(sec) {
+        if (sec == null) return "–";
+        return sec.toFixed(1) + "s";
+      }
+
+      function applyMetrics(data) {
+        const agg = data.aggregator || {};
+        const bb = data.backbone || null;
+
+        const queuedCount = agg.queued_client_count ?? 0;
+        document.getElementById("queued-count").textContent = queuedCount;
+        const clientIds = agg.queued_client_ids || [];
+        document.getElementById("queued-clients").textContent =
+          clientIds.length ? clientIds.join(", ") : "No clients queued.";
+
+        document.getElementById("rounds-completed").textContent =
+          agg.rounds_completed ?? "0";
+        document.getElementById("min-clients").textContent =
+          agg.min_clients_per_round ?? "–";
+        document.getElementById("round-timeout").textContent =
+          (agg.round_timeout_seconds ?? "–") + (agg.round_timeout_seconds ? "s" : "");
+
+        const remaining = agg.round_seconds_until_timeout;
+        const elapsed = agg.round_elapsed_seconds;
+        if (remaining == null || elapsed == null) {
+          document.getElementById("round-time-remaining").textContent =
+            "No round in progress.";
+        } else {
+          document.getElementById("round-time-remaining").textContent =
+            fmtSeconds(elapsed) + " elapsed • " + fmtSeconds(remaining) + " remaining";
+        }
+
+        if (!bb) {
+          document.getElementById("backbone-present").style.display = "none";
+          document.getElementById("backbone-empty").style.display = "block";
+        } else {
+          document.getElementById("backbone-present").style.display = "block";
+          document.getElementById("backbone-empty").style.display = "none";
+
+          document.getElementById("bb-version").textContent = bb.version;
+          document.getElementById("bb-algorithm").textContent =
+            "algorithm=" + (bb.algorithm || "–");
+          document.getElementById("bb-clients").textContent =
+            bb.client_count ?? "–";
+          document.getElementById("bb-interactions").textContent =
+            bb.total_interactions ?? "–";
+
+          if (bb.created_at) {
+            const d = new Date(bb.created_at);
+            document.getElementById("bb-updated").textContent =
+              d.toLocaleString();
+            document.getElementById("bb-updated-raw").textContent = bb.created_at;
+          } else {
+            document.getElementById("bb-updated").textContent = "–";
+            document.getElementById("bb-updated-raw").textContent = "";
+          }
+        }
+
+        const now = new Date();
+        document.getElementById("updated-at").textContent =
+          now.toLocaleTimeString();
+
+        if (queuedCount > 0) {
+          setStatus("ok", "Receiving uploads");
+        } else if (bb) {
+          setStatus("warn", "Idle — no clients queued");
+        } else {
+          setStatus("warn", "Waiting for first backbone version");
+        }
+      }
+
+      function connectSocket() {
+        if (socket) {
+          try {
+            socket.close();
+          } catch (e) {
+            console.warn("Error closing existing socket", e);
+          }
+        }
+
+        const loc = window.location;
+        const scheme = loc.protocol === "https:" ? "wss" : "ws";
+        const url = scheme + "://" + loc.host + "/dev/metrics/ws";
+
+        setStatus("warn", "Connecting…");
+        socket = new WebSocket(url);
+
+        socket.onopen = () => {
+          setStatus("ok", "Connected");
+        };
+
+        socket.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            applyMetrics(data);
+          } catch (e) {
+            console.error("Bad metrics payload", e);
+            setStatus("danger", "Bad payload from server");
+          }
+        };
+
+        socket.onclose = () => {
+          setStatus("danger", "Disconnected");
+        };
+
+        socket.onerror = () => {
+          setStatus("danger", "Socket error");
+        };
+      }
+
+      RECONNECT_BTN.addEventListener("click", connectSocket);
+      window.addEventListener("load", connectSocket);
+    </script>
+  </body>
+</html>
+
