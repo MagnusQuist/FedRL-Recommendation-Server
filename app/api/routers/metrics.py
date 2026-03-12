@@ -1,12 +1,15 @@
 import asyncio
-from datetime import timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import AsyncSessionLocal, get_db
+from app.api.schemas.backbone import GlobalBackboneVersion
+from app.db import AsyncSessionLocal, get_db
+from app.db.seed_status import is_database_seeded
 
 
 router = APIRouter(prefix="/dev")
@@ -25,6 +28,7 @@ async def _collect_metrics(aggregator) -> dict:
 
     if latest is None:
         backbone_info = None
+        last_update_age_seconds = None
     else:
         created_at = latest.created_at
         if created_at and created_at.tzinfo is None:
@@ -38,11 +42,26 @@ async def _collect_metrics(aggregator) -> dict:
             "created_at": created_at.isoformat() if created_at else None,
         }
 
+        if created_at:
+            last_update_age_seconds = (datetime.now(timezone.utc) - created_at).total_seconds()
+        else:
+            last_update_age_seconds = None
+
+    # Count persisted backbone versions for historical context.
+    result = await db.execute(select(func.count()).select_from(GlobalBackboneVersion))
+    total_versions = int(result.scalar_one())
+
     agg_state = aggregator.metrics_snapshot()
+    seeded = await is_database_seeded()
 
     return {
-        "backbone": backbone_info,
+        "backbone": {
+            **(backbone_info or {}),
+            "total_versions": total_versions,
+            "seconds_since_last_update": last_update_age_seconds,
+        } if backbone_info is not None else None,
         "aggregator": agg_state,
+        "db_seeded": seeded,
     }
 
 

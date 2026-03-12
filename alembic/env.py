@@ -11,7 +11,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from app.database import Base  # noqa: E402 — must come after sys.path insert
+from app.db import Base, DATABASE_URL  # noqa: E402 — must come after sys.path insert
 import app.api.models  # noqa: F401, E402 — import models so metadata is populated
 
 config = context.config
@@ -20,11 +20,6 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
-
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://fedrl:fedrl@localhost:5432/fedrl",
-)
 
 
 def run_migrations_offline() -> None:

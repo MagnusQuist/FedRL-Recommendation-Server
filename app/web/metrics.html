@@ -42,6 +42,21 @@
             <div id="queued-clients" class="metric-helper mono muted"></div>
           </div>
           <div class="metric">
+            <div class="metric-label">Queue algo breakdown</div>
+            <div id="queued-algo" class="metric-value">–</div>
+            <div class="metric-helper">Uploads per algorithm</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Interactions in queue</div>
+            <div id="queued-interactions" class="metric-value">–</div>
+            <div class="metric-helper">Total / average n<sub>k</sub></div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Oldest upload age</div>
+            <div id="queued-oldest-age" class="metric-value">–</div>
+            <div class="metric-helper">How long since first queued client</div>
+          </div>
+          <div class="metric">
             <div class="metric-label">Rounds completed</div>
             <div id="rounds-completed" class="metric-value">–</div>
             <div class="metric-helper">Since server start</div>
@@ -84,14 +99,40 @@
               <div class="metric-helper">Σ n<sub>k</sub> for last round</div>
             </div>
             <div class="metric">
+              <div class="metric-label">Total versions</div>
+              <div id="bb-total-versions" class="metric-value">–</div>
+              <div class="metric-helper">Backbone rows stored in Postgres</div>
+            </div>
+            <div class="metric">
               <div class="metric-label">Last updated</div>
               <div id="bb-updated" class="metric-value" style="font-size:14px;">–</div>
               <div id="bb-updated-raw" class="metric-helper mono"></div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Time since update</div>
+              <div id="bb-since-update" class="metric-value">–</div>
+              <div class="metric-helper">How long since last backbone persisted</div>
             </div>
           </div>
         </div>
         <div id="backbone-empty" class="muted" style="display:none; font-size:13px; margin-top:6px;">
           No backbone versions have been persisted yet. Run a seed or let a round complete.
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Database</div>
+            <div class="card-subtitle">Seed status</div>
+          </div>
+        </div>
+        <div class="grid">
+          <div class="metric">
+            <div class="metric-label">Seeded</div>
+            <div id="db-seeded" class="metric-value">–</div>
+            <div class="metric-helper">Has initial data been inserted?</div>
+          </div>
         </div>
       </section>
     </div>
@@ -131,6 +172,25 @@
         document.getElementById("queued-clients").textContent =
           clientIds.length ? clientIds.join(", ") : "No clients queued.";
 
+        const algoCounts = agg.queued_algorithm_counts || {};
+        const algoText = Object.entries(algoCounts)
+          .map(([k, v]) => `${k}: ${v}`)
+          .join(" · ");
+        document.getElementById("queued-algo").textContent =
+          algoText || "–";
+
+        const totalInteractions = agg.queued_total_interactions ?? null;
+        const avgInteractions = agg.queued_avg_interactions ?? null;
+        document.getElementById("queued-interactions").textContent =
+          totalInteractions == null
+            ? "–"
+            : avgInteractions == null
+            ? `${totalInteractions}`
+            : `${totalInteractions} total / ${avgInteractions.toFixed(1)} avg`;
+
+        document.getElementById("queued-oldest-age").textContent =
+          fmtSeconds(agg.queued_oldest_upload_age_seconds);
+
         document.getElementById("rounds-completed").textContent =
           agg.rounds_completed ?? "0";
         document.getElementById("min-clients").textContent =
@@ -162,6 +222,8 @@
             bb.client_count ?? "–";
           document.getElementById("bb-interactions").textContent =
             bb.total_interactions ?? "–";
+          document.getElementById("bb-total-versions").textContent =
+            bb.total_versions ?? "–";
 
           if (bb.created_at) {
             const d = new Date(bb.created_at);
@@ -172,7 +234,14 @@
             document.getElementById("bb-updated").textContent = "–";
             document.getElementById("bb-updated-raw").textContent = "";
           }
+
+          document.getElementById("bb-since-update").textContent =
+            fmtSeconds(bb.seconds_since_last_update);
         }
+
+        const seeded = data.db_seeded;
+        document.getElementById("db-seeded").textContent =
+          seeded == null ? "–" : seeded ? "Yes" : "No";
 
         const now = new Date();
         document.getElementById("updated-at").textContent =

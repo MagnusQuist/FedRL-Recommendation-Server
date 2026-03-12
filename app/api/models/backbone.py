@@ -19,29 +19,38 @@ class BackboneUpload(BaseModel):
     """
     Payload sent by a Raspberry Pi client to POST /fl/upload.
 
-    backbone_weights is a dict mapping each parameter key to a nested list
-    of floats (the raw weight tensor serialised as JSON). The payload is
-    expected to arrive gzip-compressed and base64-encoded by the client,
-    but FastAPI decompresses it before this schema is applied.
+    backbone_weights is the gzip-compressed, base64-encoded JSON representation
+    of the backbone parameter tensors (matching what GET /backbone/model returns).
     """
     client_id: str = Field(..., description="Arbitrary client identifier — no auth required.")
     backbone_version: int = Field(..., ge=0, description="The backbone version this upload was trained on top of.")
     interaction_count: int = Field(..., gt=0, description="n_k — interactions logged since the last upload.")
     algorithm: str = Field("ts", pattern="^(ts|dqn)$", description="'ts' or 'dqn'.")
-    backbone_weights: dict[str, list] = Field(
+    backbone_weights: str = Field(
         ...,
-        description="Backbone parameter tensors serialised as nested lists of floats.",
+        description="Backbone weights as a base64-encoded gzip string (matches GET /backbone/model).",
     )
 
-    @field_validator("backbone_weights")
+    @field_validator("backbone_weights", mode="before")
     @classmethod
-    def validate_backbone_keys(cls, v: dict) -> dict:
-        """
-        Reject any payload whose keys are not exactly the known backbone params.
-        This is the server-side privacy enforcement: if a client accidentally
-        (or maliciously) includes local head parameters, the upload is refused.
-        """
-        received = frozenset(v.keys())
+    def validate_backbone_blob(cls, v: str | dict[str, list]) -> str | dict[str, list]:
+        """Validate that backbone_weights decodes to a valid backbone parameter dict."""
+        if isinstance(v, str):
+            try:
+                from app.fl.aggregator import decode_backbone_blob as _decode
+
+                decoded = _decode(v)
+            except Exception as e:
+                raise ValueError(
+                    "Invalid backbone_weights: expected a base64-encoded gzip blob of JSON." 
+                    "See GET /backbone/model for the expected encoding."
+                ) from e
+        elif isinstance(v, dict):
+            decoded = v
+        else:
+            return v
+
+        received = frozenset(decoded.keys())
         unexpected = received - BACKBONE_PARAM_KEYS
         missing = BACKBONE_PARAM_KEYS - received
 
@@ -54,6 +63,7 @@ class BackboneUpload(BaseModel):
             raise ValueError(
                 f"Upload rejected — missing expected backbone keys: {sorted(missing)}."
             )
+
         return v
 
 

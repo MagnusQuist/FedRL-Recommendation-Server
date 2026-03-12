@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.database import get_db
+from app.db import get_db
 from app.api.schemas.category import Category
 from app.api.schemas.food_item import FoodItem
 from app.api.schemas.food_item_substitution_group import FoodItemSubstitutionGroup

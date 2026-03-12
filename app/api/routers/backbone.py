@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
+from app.db import get_db
 from app.fl.aggregator import MIN_CLIENTS_PER_ROUND, ROUND_TIMEOUT_SECONDS
 from app.api.models.backbone import BackboneDownload, BackboneUpload, RoundStatus, UploadAck
 
@@ -131,12 +131,21 @@ async def upload_backbone(
         payload.algorithm,
     )
 
+    # The payload includes a base64-encoded, gzip-compressed JSON blob of the
+    # backbone weight tensors (matching GET /backbone/model). Decode it here
+    # before passing on to the aggregator.
+    weights_dict = payload.backbone_weights
+    if isinstance(weights_dict, str):
+        from app.fl.aggregator import decode_backbone_blob
+
+        weights_dict = decode_backbone_blob(weights_dict)
+
     round_triggered, queued = await aggregator.enqueue(
         client_id=payload.client_id,
         backbone_version=payload.backbone_version,
         interaction_count=payload.interaction_count,
         algorithm=payload.algorithm,
-        weights_dict=payload.backbone_weights,
+        weights_dict=weights_dict,
         db=db,
     )
 

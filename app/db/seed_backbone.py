@@ -9,9 +9,9 @@ enough interactions to trigger a FedAvg round.
 
 Usage (from the repo root, with PostgreSQL running):
 
-    python -m app.seed_backbone                    # default: ts algorithm
-    python -m app.seed_backbone --algorithm dqn    # seed a DQN backbone
-    python -m app.seed_backbone --algorithm ts --algorithm dqn  # seed both
+    python -m app.db.seed_backbone                    # default: ts algorithm
+    python -m app.db.seed_backbone --algorithm dqn    # seed a DQN backbone
+    python -m app.db.seed_backbone --algorithm ts --algorithm dqn  # seed both
 
 The script is idempotent for version 0: if a version 0 backbone already
 exists for the given algorithm it will not create a duplicate.
@@ -27,7 +27,7 @@ import logging
 import numpy as np
 from sqlalchemy import select
 
-from app.database import AsyncSessionLocal
+from app.db import AsyncSessionLocal
 from app.api.schemas.backbone import GlobalBackboneVersion
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")

@@ -15,8 +15,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.database import AsyncSessionLocal
-from app.db_init import ensure_seed_backbones, ensure_seed_catalogue, run_migrations
+import os
+
+from app.db import AsyncSessionLocal
+from app.db.db_init import ensure_seed_backbones, ensure_seed_catalogue, run_migrations
+from app.db.seed_status import is_database_seeded
 from app.fl.aggregator import FLAggregator, ROUND_TIMEOUT_SECONDS
 from app.api.routers.api import router as api_router
 
@@ -44,14 +47,24 @@ async def lifespan(app: FastAPI):
     This is used by FastAPI to run startup and shutdown logic.
     """
     logger.info("Starting DB init...")
-    await run_migrations()
-    logger.info("Migrations done")
 
-    await ensure_seed_backbones()
-    logger.info("Backbone seeding done")
+    # Running migrations on every startup is convenient for development, but may
+    # not be ideal for production. Control this via an env var so it can be
+    # disabled in deployment pipelines where migrations are managed separately.
+    if os.getenv("RUN_MIGRATIONS_ON_STARTUP", "true").strip().lower() in {"1", "true", "yes"}:
+        await run_migrations()
+        logger.info("Migrations done")
+    else:
+        logger.info("Skipping migrations (RUN_MIGRATIONS_ON_STARTUP=false)")
 
-    await ensure_seed_catalogue()
-    logger.info("Catalogue seeding done")
+    if not await is_database_seeded():
+        await ensure_seed_backbones()
+        logger.info("Backbone seeding done")
+
+        await ensure_seed_catalogue()
+        logger.info("Catalogue seeding done")
+    else:
+        logger.info("Existing data detected; skipping seed data population.")
 
     aggregator = FLAggregator()
     app.state.aggregator = aggregator
@@ -75,7 +88,7 @@ def create_app() -> FastAPI:
             "Federated RL recommendation server for the Nudge2Green project. "
             "Exposes the food catalogue API and the federated learning aggregation endpoints."
         ),
-        version="0.2.0",
+        version="0.3.0",
         lifespan=lifespan,
     )
 

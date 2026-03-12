@@ -6,15 +6,17 @@ from typing import Any
 
 from sqlalchemy import func, select
 
-from app.database import AsyncSessionLocal
+from app.db import AsyncSessionLocal
 from app.api.schemas.category import Category
 from app.api.schemas.food_item import FoodItem
 from app.api.schemas.food_item_substitution_group import FoodItemSubstitutionGroup
 from app.api.schemas.substitution_group import SubstitutionGroup
 
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_FILE = BASE_DIR / "data" / "synthetic_food_catalogue_100_items_v2.json"
+# `data/` lives at the repository root (not inside `app/`), so resolve from
+# the project root regardless of module location.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DATA_FILE = REPO_ROOT / "data" / "synthetic_food_catalogue_100_items_v2.json"
 
 def _codeify(value: str) -> str:
     return (

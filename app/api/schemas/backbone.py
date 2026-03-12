@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from sqlalchemy import DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
-from app.database import Base
+from app.db import Base
 
 class GlobalBackboneVersion(Base):
     __tablename__ = "global_backbone_versions"

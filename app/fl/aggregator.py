@@ -153,12 +153,32 @@ class FLAggregator:
         return self._rounds_completed
 
     def metrics_snapshot(self) -> dict[str, Any]:
+        """Lightweight snapshot of the in-memory aggregation state for debugging.
+
+        Does not expose model weights.
         """
-        Lightweight snapshot of the in-memory aggregation state for debugging
-        and development dashboards. Does not expose model weights.
-        """
-        queued_client_ids = list(self._queue.keys())
+        queued_uploads = list(self._queue.values())
+        queued_client_ids = [u.client_id for u in queued_uploads]
         queued_client_count = len(queued_client_ids)
+
+        # Queue algorithm breakdown and interaction stats
+        queued_algorithm_counts: dict[str, int] = {}
+        queued_total_interactions = 0
+        oldest_received: Optional[float] = None
+        for u in queued_uploads:
+            queued_algorithm_counts[u.algorithm] = queued_algorithm_counts.get(u.algorithm, 0) + 1
+            queued_total_interactions += u.interaction_count
+            if oldest_received is None or u.received_at < oldest_received:
+                oldest_received = u.received_at
+
+        queued_avg_interactions = (
+            queued_total_interactions / queued_client_count
+            if queued_client_count
+            else None
+        )
+        oldest_upload_age_seconds = (
+            time.monotonic() - oldest_received if oldest_received is not None else None
+        )
 
         if self._round_start is None or not queued_client_ids:
             round_elapsed = None
@@ -170,6 +190,10 @@ class FLAggregator:
         return {
             "queued_client_ids": queued_client_ids,
             "queued_client_count": queued_client_count,
+            "queued_algorithm_counts": queued_algorithm_counts,
+            "queued_total_interactions": queued_total_interactions,
+            "queued_avg_interactions": queued_avg_interactions,
+            "queued_oldest_upload_age_seconds": oldest_upload_age_seconds,
             "rounds_completed": self._rounds_completed,
             "min_clients_per_round": MIN_CLIENTS_PER_ROUND,
             "round_timeout_seconds": ROUND_TIMEOUT_SECONDS,

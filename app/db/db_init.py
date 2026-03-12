@@ -4,22 +4,25 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
+from sqlalchemy import text
 
-from app.seed_backbone import seed_algorithm
-from app.seed_catalogue import seed_catalogue
+from app.db import AsyncSessionLocal
+from app.db.seed_backbone import seed_algorithm
+from app.db.seed_catalogue import seed_catalogue
 
 
 logger = logging.getLogger(__name__)
 
 
-def _alembic_config() -> Config:
-    """
-    Create an Alembic Config pointing at this project's alembic.ini.
 
-    This is resolved relative to the project root so it works both locally
-    and inside Docker, assuming this module lives under the app package.
+
+def _alembic_config() -> Config:
+    """Create an Alembic Config pointing at this project's alembic.ini.
+
+    This is resolved relative to the repository root (not the app package)
+    so it works both locally and inside Docker.
     """
-    project_root = Path(__file__).resolve().parents[1]
+    project_root = Path(__file__).resolve().parents[2]
     return Config(str(project_root / "alembic.ini"))
 
 

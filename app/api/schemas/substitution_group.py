@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import SmallInteger, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database import Base
+from app.db import Base
 
 if TYPE_CHECKING:
     from app.api.schemas.food_item_substitution_group import FoodItemSubstitutionGroup
