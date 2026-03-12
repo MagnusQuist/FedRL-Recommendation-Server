@@ -4,16 +4,12 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import text
 
-from app.db import AsyncSessionLocal
 from app.db.seed_backbone import seed_algorithm
 from app.db.seed_catalogue import seed_catalogue
 
 
 logger = logging.getLogger(__name__)
-
-
 
 
 def _alembic_config() -> Config:
