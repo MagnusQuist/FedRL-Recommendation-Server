@@ -5,3 +5,5 @@ from `app.api.routers.backbone`.
 """
 
 from app.api.routers.backbone import router
+
+__all__ = ["router"]

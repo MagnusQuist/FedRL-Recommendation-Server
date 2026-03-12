@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     JSON,
@@ -17,6 +18,10 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.api.schemas.category import Category
+    from app.api.schemas.food_item_substitution_group import FoodItemSubstitutionGroup
 
 
 class FoodItem(Base):
