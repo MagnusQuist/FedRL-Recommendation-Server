@@ -40,9 +40,15 @@ async def lifespan(app: FastAPI):
     # - Backbone seeding only creates version 0 backbones if they don't exist yet.
     # - Catalogue seeding currently assumes a fresh database; extend it if
     #   you need strict idempotency across restarts with existing data.
+    logger.info("Starting DB init...")
     await run_migrations()
+    logger.info("Migrations done")
+
     await ensure_seed_backbones()
+    logger.info("Backbone seeding done")
+
     await ensure_seed_catalogue()
+    logger.info("Catalogue seeding done")
 
     # Mount the aggregator singleton on app state so routers can access it
     aggregator = FLAggregator()

@@ -36,5 +36,5 @@ USER appuser
 
 EXPOSE 8000
 
-# Uvicorn with 2 workers — sufficient for thesis-scale load
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# Uvicorn with 1 worker — sufficient for thesis-scale load
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

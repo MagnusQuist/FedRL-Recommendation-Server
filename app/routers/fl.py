@@ -5,7 +5,7 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.fl.aggregator import MIN_CLIENTS_PER_ROUND, ROUND_TIMEOUT_SECONDS, decode_backbone_blob
+from app.fl.aggregator import MIN_CLIENTS_PER_ROUND, ROUND_TIMEOUT_SECONDS
 from app.models.backbone import BackboneDownload, BackboneUpload, RoundStatus, UploadAck
 
 logger = logging.getLogger(__name__)
@@ -109,14 +109,14 @@ async def download_backbone(
     if latest.version <= since:
         return Response(status_code=status.HTTP_304_NOT_MODIFIED)
 
-    weights = decode_backbone_blob(latest.weights_blob)
-
+    # Expose the stored gzip-compressed, base64-encoded weights blob directly.
+    # Clients can decode base64 and then gunzip to recover the original tensors.
     return BackboneDownload(
         version=latest.version,
         algorithm=latest.algorithm,
         client_count=latest.client_count,
         total_interactions=latest.total_interactions,
-        backbone_weights=weights,
+        backbone_weights=latest.weights_blob,
     )
 
 

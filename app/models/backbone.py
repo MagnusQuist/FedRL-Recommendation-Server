@@ -58,12 +58,18 @@ class BackboneUpload(BaseModel):
 
 
 class BackboneDownload(BaseModel):
-    """Response body for GET /fl/model when a newer backbone is available."""
+    """
+    Response body for GET /fl/model when a newer backbone is available.
+
+    backbone_weights is the gzip-compressed, base64-encoded JSON representation
+    of the backbone parameter tensors. Once decoded and decompressed, it
+    matches the structure that clients originally uploaded.
+    """
     version: int
     algorithm: str
     client_count: int
     total_interactions: int
-    backbone_weights: dict[str, list]
+    backbone_weights: str
 
 
 class UploadAck(BaseModel):
