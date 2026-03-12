@@ -28,7 +28,7 @@ import numpy as np
 from sqlalchemy import select
 
 from app.database import AsyncSessionLocal
-from app.schemas.backbone import GlobalBackboneVersion
+from app.api.schemas.backbone import GlobalBackboneVersion
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger(__name__)

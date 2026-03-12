@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <title>FedRL – Dev Metrics</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="stylesheet" href="/dev/static/css/styles.css" />
+    <link rel="stylesheet" href="/api/v1/dev/static/css/styles.css" />
   </head>
   <body>
     <header>
@@ -198,7 +198,12 @@
 
         const loc = window.location;
         const scheme = loc.protocol === "https:" ? "wss" : "ws";
-        const url = scheme + "://" + loc.host + "/dev/metrics/ws";
+
+        // Determine the current base path (e.g. "/api/v1/dev") from the URL.
+        const parts = loc.pathname.split("/").filter(Boolean);
+        const base = "/" + parts.slice(0, -1).join("/");
+
+        const url = scheme + "://" + loc.host + base + "/metrics/ws";
 
         setStatus("warn", "Connecting…");
         socket = new WebSocket(url);

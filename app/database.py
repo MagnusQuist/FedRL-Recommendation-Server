@@ -10,7 +10,7 @@ DATABASE_URL = os.getenv(
 
 engine = create_async_engine(
     DATABASE_URL,
-    echo=bool(os.getenv("SQL_ECHO", False)),
+    echo=bool(os.getenv("SQL_ECHO", True)),
     pool_pre_ping=True,
 )
 

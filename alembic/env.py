@@ -12,7 +12,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from app.database import Base  # noqa: E402 — must come after sys.path insert
-import app.models  # noqa: F401, E402 — import models so metadata is populated
+import app.api.models  # noqa: F401, E402 — import models so metadata is populated
 
 config = context.config
 

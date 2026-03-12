@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import AsyncSessionLocal, get_db
 
 
-router = APIRouter()
+router = APIRouter(prefix="/dev")
 
 
 def get_aggregator(request: Request):
@@ -81,7 +81,7 @@ async def metrics_ws(websocket: WebSocket):
         return
 
 
-METRICS_HTML_PATH = Path(__file__).resolve().parents[1] / "web" / "metrics.html"
+METRICS_HTML_PATH = Path(__file__).resolve().parents[2] / "web" / "metrics.html"
 
 
 @router.get("/metrics")

@@ -7,10 +7,10 @@ from typing import Any
 from sqlalchemy import func, select
 
 from app.database import AsyncSessionLocal
-from app.schemas.category import Category
-from app.schemas.food_item import FoodItem
-from app.schemas.food_item_substitution_group import FoodItemSubstitutionGroup
-from app.schemas.substitution_group import SubstitutionGroup
+from app.api.schemas.category import Category
+from app.api.schemas.food_item import FoodItem
+from app.api.schemas.food_item_substitution_group import FoodItemSubstitutionGroup
+from app.api.schemas.substitution_group import SubstitutionGroup
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -108,12 +108,12 @@ async def seed_catalogue() -> None:
                 is_vegetarian=is_vegetarian,
                 is_gluten_free=bool(row.get("is_gluten_free", False)),
                 allergens=row.get("allergens", []),
-                item_metadata={
-                    "source": "synthetic_food_catalogue_100_items_v2",
-                    "raw_item": row,
-                    "dataset_metadata": raw.get("metadata", {}),
-                    "feature_flags": raw.get("features", {}),
-                },
+                #item_metadata={
+                #    "source": "synthetic_food_catalogue_100_items_v2",
+                #    "raw_item": row,
+                #    "dataset_metadata": raw.get("metadata", {}),
+                #    "feature_flags": raw.get("features", {}),
+                #},
             )
             session.add(food_item)
             await session.flush()

@@ -89,12 +89,12 @@ class FoodItem(Base):
         default=list,
         comment="Array of allergen codes, e.g. ['milk', 'soy'].",
     )
-    item_metadata: Mapped[dict] = mapped_column(
-        JSON,
-        nullable=False,
-        default=dict,
-        comment="Arbitrary item metadata from the source catalogue.",
-    )
+    #item_metadata: Mapped[dict] = mapped_column(
+    #    JSON,
+    #    nullable=False,
+    #    default=dict,
+    #    comment="Arbitrary item metadata from the source catalogue.",
+    #)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

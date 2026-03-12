@@ -1,8 +1,8 @@
-"""initial schema with food item uuid
+"""initial schema
 
-Revision ID: 13cace0cd11e
+Revision ID: f7251ca53779
 Revises: 
-Create Date: 2026-03-12 12:52:45.957633
+Create Date: 2026-03-12 14:26:49.844002
 """
 from typing import Sequence, Union
 
@@ -10,7 +10,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = '13cace0cd11e'
+revision: str = 'f7251ca53779'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -67,7 +67,6 @@ def upgrade() -> None:
     sa.Column('is_vegetarian', sa.Boolean(), nullable=False),
     sa.Column('is_gluten_free', sa.Boolean(), nullable=False),
     sa.Column('allergens', sa.JSON(), nullable=False, comment="Array of allergen codes, e.g. ['milk', 'soy']."),
-    sa.Column('item_metadata', sa.JSON(), nullable=False, comment='Arbitrary item metadata from the source catalogue.'),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.ForeignKeyConstraint(['category_id'], ['categories.id'], ondelete='RESTRICT'),
     sa.PrimaryKeyConstraint('id'),
