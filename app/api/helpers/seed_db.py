@@ -5,6 +5,8 @@ from fastapi import logger
 
 from app.db.seed_status import is_database_seeded
 
+logger = logger.getLogger(__name__)
+
 async def seed_db() -> None:
     # Running migrations on every startup is convenient for development, but may
     # not be ideal for production. Control this via an env var so it can be
