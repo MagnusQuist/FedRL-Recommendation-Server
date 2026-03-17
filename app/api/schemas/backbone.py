@@ -1,12 +1,14 @@
 from datetime import datetime, timezone
-from sqlalchemy import DateTime, Integer, String, Text
+from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from app.db import Base
 
 class GlobalBackboneVersion(Base):
     __tablename__ = "global_backbone_versions"
 
-    version: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
     weights_blob: Mapped[str] = mapped_column(
         Text, nullable=False,
         comment="gzip-compressed, base64-encoded JSON of backbone weight arrays."
@@ -27,6 +29,10 @@ class GlobalBackboneVersion(Base):
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (
+        UniqueConstraint("algorithm", "version"),
     )
 
     def __repr__(self) -> str:
