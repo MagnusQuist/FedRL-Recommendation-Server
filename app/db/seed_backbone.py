@@ -1,100 +1,158 @@
 """
 seed_backbone.py
 ================
-Writes a version 0 global backbone to the database.
+Writes an initial global backbone (version 1) to the database.
 
-Version 0 represents a randomly initialised backbone — it is the starting
-point that all Raspberry Pi clients download before they have accumulated
-enough interactions to trigger a FedAvg round.
+Version 1 represents a randomly initialised backbone — it is the starting
+point that Raspberry Pi clients download before they have accumulated enough
+interactions to trigger a FedAvg round.
 
-Usage (from the repo root, with PostgreSQL running):
-
-    python -m app.db.seed_backbone                    # default: ts algorithm
-    python -m app.db.seed_backbone --algorithm dqn    # seed a DQN backbone
-    python -m app.db.seed_backbone --algorithm ts --algorithm dqn  # seed both
-
-The script is idempotent for version 0: if a version 0 backbone already
-exists for the given algorithm it will not create a duplicate.
+Environment variables (.env supported):
+    SUPPORTED_BACKBONE_ALGORITHMS=ts,dqn
+    DEFAULT_BACKBONE_ALGORITHMS=ts,dqn
+    BACKBONE_INIT_SEED=42
 """
 
-import argparse
-import asyncio
+from __future__ import annotations
+
 import base64
 import gzip
 import json
 import logging
+import os
+from typing import Iterable
 
 import numpy as np
+from dotenv import load_dotenv
 from sqlalchemy import select
 
 from app.db import AsyncSessionLocal
 from app.api.schemas.backbone import GlobalBackboneVersion
 
+load_dotenv()
+
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Backbone architecture constants — must match the client implementation
-# MLP: input(28) -> Linear -> ReLU -> Linear -> output(32)
-# ---------------------------------------------------------------------------
 INPUT_DIM = 28
 HIDDEN_DIM = 64
 OUTPUT_DIM = 32
+INITIAL_VERSION = 1
+
+FALLBACK_SUPPORTED_ALGORITHMS = ("ts", "dqn")
+FALLBACK_DEFAULT_ALGORITHMS = ("ts", "dqn")
+FALLBACK_BASE_SEED = 42
 
 
-def _init_backbone_weights(rng: np.random.Generator) -> dict[str, np.ndarray]:
+def _parse_csv_env(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip().lower() for item in value.split(",") if item.strip()]
+
+
+def _load_algorithm_config() -> tuple[tuple[str, ...], tuple[str, ...]]:
+    supported = _parse_csv_env(os.getenv("SUPPORTED_BACKBONE_ALGORITHMS"))
+    default = _parse_csv_env(os.getenv("DEFAULT_BACKBONE_ALGORITHMS"))
+
+    if not supported:
+        supported = list(FALLBACK_SUPPORTED_ALGORITHMS)
+
+    if not default:
+        default = list(FALLBACK_DEFAULT_ALGORITHMS)
+
+    supported_set = set(supported)
+    invalid_defaults = [algo for algo in default if algo not in supported_set]
+    if invalid_defaults:
+        raise ValueError(
+            "DEFAULT_BACKBONE_ALGORITHMS contains values not present in "
+            f"SUPPORTED_BACKBONE_ALGORITHMS: {invalid_defaults}"
+        )
+
+    return tuple(supported), tuple(default)
+
+
+SUPPORTED_ALGORITHMS, DEFAULT_ALGORITHMS = _load_algorithm_config()
+BASE_SEED = int(os.getenv("BACKBONE_INIT_SEED", str(FALLBACK_BASE_SEED)))
+
+
+def _kaiming_uniform(
+    rng: np.random.Generator,
+    fan_in: int,
+    fan_out: int,
+) -> np.ndarray:
+    bound = np.sqrt(1.0 / fan_in)
+    return rng.uniform(-bound, bound, (fan_out, fan_in)).astype(np.float32)
+
+
+def _bias_uniform(
+    rng: np.random.Generator,
+    fan_in: int,
+    size: int,
+) -> np.ndarray:
+    bound = np.sqrt(1.0 / fan_in)
+    return rng.uniform(-bound, bound, (size,)).astype(np.float32)
+
+
+def init_backbone_weights(seed: int) -> dict[str, np.ndarray]:
     """
-    Kaiming uniform initialisation for both Linear layers.
-    This matches PyTorch's default weight initialisation so the seed backbone
-    is compatible with a freshly constructed nn.Sequential on the client.
-    """
-    def kaiming_uniform(fan_in: int, fan_out: int) -> np.ndarray:
-        bound = np.sqrt(1.0 / fan_in)
-        return rng.uniform(-bound, bound, (fan_out, fan_in)).astype(np.float32)
+    Create a freshly initialised backbone state dict.
 
-    def bias_uniform(fan_in: int, size: int) -> np.ndarray:
-        bound = np.sqrt(1.0 / fan_in)
-        return rng.uniform(-bound, bound, (size,)).astype(np.float32)
+    Using the same seed for TS and DQN ensures both algorithm families begin
+    from the same initial parameter state for fair comparison.
+    """
+    rng = np.random.default_rng(seed)
 
     return {
-        "backbone.0.weight": kaiming_uniform(INPUT_DIM, HIDDEN_DIM),   # (64, 28)
-        "backbone.0.bias":   bias_uniform(INPUT_DIM, HIDDEN_DIM),      # (64,)
-        "backbone.2.weight": kaiming_uniform(HIDDEN_DIM, OUTPUT_DIM),  # (32, 64)
-        "backbone.2.bias":   bias_uniform(HIDDEN_DIM, OUTPUT_DIM),     # (32,)
+        "backbone.0.weight": _kaiming_uniform(rng, INPUT_DIM, HIDDEN_DIM),
+        "backbone.0.bias": _bias_uniform(rng, INPUT_DIM, HIDDEN_DIM),
+        "backbone.2.weight": _kaiming_uniform(rng, HIDDEN_DIM, OUTPUT_DIM),
+        "backbone.2.bias": _bias_uniform(rng, HIDDEN_DIM, OUTPUT_DIM),
     }
 
 
-def _serialise(weights: dict[str, np.ndarray]) -> str:
-    """Convert weight arrays to gzip-compressed, base64-encoded JSON blob."""
-    weights_json = {k: v.tolist() for k, v in weights.items()}
-    compressed = gzip.compress(json.dumps(weights_json).encode())
-    return base64.b64encode(compressed).decode()
+def serialise_weights(weights: dict[str, np.ndarray]) -> str:
+    payload = {name: value.tolist() for name, value in weights.items()}
+    compressed = gzip.compress(json.dumps(payload).encode("utf-8"))
+    return base64.b64encode(compressed).decode("utf-8")
 
 
-async def seed_algorithm(algorithm: str, seed: int = 42) -> None:
+async def initial_version_exists(algorithm: str) -> bool:
+    """Return True if the initial seeded version already exists for algorithm."""
     async with AsyncSessionLocal() as db:
-        # Check if version 0 already exists for this algorithm
         result = await db.execute(
             select(GlobalBackboneVersion)
             .where(GlobalBackboneVersion.algorithm == algorithm)
-            .order_by(GlobalBackboneVersion.version.asc())
+            .where(GlobalBackboneVersion.version == INITIAL_VERSION)
             .limit(1)
         )
-        existing = result.scalar_one_or_none()
+        return result.scalar_one_or_none() is not None
 
-        if existing is not None:
-            logger.info(
-                "Version 0 backbone for algorithm '%s' already exists "
-                "(earliest version in db: %d) — skipping.",
-                algorithm, existing.version,
-            )
-            return
 
-        rng = np.random.default_rng(seed)
-        weights = _init_backbone_weights(rng)
-        blob = _serialise(weights)
+async def seed_algorithm(algorithm: str, seed: int = BASE_SEED) -> None:
+    """
+    Seed the initial backbone (version 1) for one algorithm if it does not
+    already exist.
+    """
+    if algorithm not in SUPPORTED_ALGORITHMS:
+        raise ValueError(
+            f"Unsupported algorithm '{algorithm}'. "
+            f"Supported algorithms: {SUPPORTED_ALGORITHMS}"
+        )
 
+    if await initial_version_exists(algorithm):
+        logger.info(
+            "Initial backbone for algorithm='%s' (version=%d) already exists — skipping.",
+            algorithm,
+            INITIAL_VERSION,
+        )
+        return
+
+    weights = init_backbone_weights(seed)
+    blob = serialise_weights(weights)
+
+    async with AsyncSessionLocal() as db:
         backbone = GlobalBackboneVersion(
+            version=INITIAL_VERSION,
             weights_blob=blob,
             algorithm=algorithm,
             client_count=0,
@@ -104,33 +162,24 @@ async def seed_algorithm(algorithm: str, seed: int = 42) -> None:
         await db.commit()
         await db.refresh(backbone)
 
-        # Log weight shapes for verification
-        for key, arr in weights.items():
-            logger.info("  %s  shape=%s  dtype=%s", key, arr.shape, arr.dtype)
+    for key, arr in weights.items():
+        logger.info("  %s shape=%s dtype=%s", key, arr.shape, arr.dtype)
 
-        logger.info(
-            "Seeded version %d backbone for algorithm='%s' "
-            "(random seed=%d, blob_size=%d bytes).",
-            backbone.version, algorithm, seed, len(blob),
-        )
-
-
-async def main(algorithms: list[str]) -> None:
-    for algo in algorithms:
-        logger.info("Seeding backbone for algorithm='%s' ...", algo)
-        await seed_algorithm(algo)
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Seed version 0 backbone weights.")
-    parser.add_argument(
-        "--algorithm",
-        choices=["ts", "dqn"],
-        action="append",
-        dest="algorithms",
-        default=None,
-        help="Algorithm to seed. Pass multiple times for multiple algorithms. Default: ts",
+    logger.info(
+        "Seeded initial backbone id=%d version=%d for algorithm='%s' "
+        "(seed=%d, blob_size=%d bytes).",
+        backbone.id,
+        backbone.version,
+        algorithm,
+        seed,
+        len(blob),
     )
-    args = parser.parse_args()
-    algorithms = args.algorithms or ["ts"]
-    asyncio.run(main(algorithms))
+
+
+async def seed_algorithms(
+    algorithms: Iterable[str],
+    base_seed: int = BASE_SEED,
+) -> None:
+    for algorithm in algorithms:
+        logger.info("Seeding backbone for algorithm='%s' ...", algorithm)
+        await seed_algorithm(algorithm, seed=base_seed)

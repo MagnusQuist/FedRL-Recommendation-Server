@@ -5,7 +5,7 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 
-from app.db.seed_backbone import seed_algorithm
+from app.db.seed_backbone import DEFAULT_ALGORITHMS, seed_algorithms
 from app.db.seed_catalogue import seed_catalogue
 
 
@@ -31,11 +31,9 @@ async def run_migrations() -> None:
 
 
 async def ensure_seed_backbones(algorithms: list[str] | None = None) -> None:
-    """Ensure a version 0 backbone exists for the given algorithms."""
-    algos = algorithms or ["ts"]
-    for algo in algos:
-        logger.info("Ensuring version 0 backbone exists for algorithm='%s'...", algo)
-        await seed_algorithm(algo)
+    """Ensure the initial backbone (version 1) exists for the requested algorithms."""
+    algos = algorithms or list(DEFAULT_ALGORITHMS)
+    await seed_algorithms(algos)
 
 
 async def ensure_seed_catalogue() -> None:

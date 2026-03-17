@@ -50,7 +50,7 @@ class FoodItem(Base):
     market: Mapped[str | None] = mapped_column(String, nullable=True)
     brand: Mapped[str | None] = mapped_column(String, nullable=True)
 
-    price_eur: Mapped[float] = mapped_column(
+    price_dkk: Mapped[float] = mapped_column(
         Numeric(8, 2),
         nullable=False,
         comment="Price of the item in EUR.",

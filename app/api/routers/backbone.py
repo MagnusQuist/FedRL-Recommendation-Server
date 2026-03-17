@@ -1,12 +1,13 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.fl.aggregator import MIN_CLIENTS_PER_ROUND, ROUND_TIMEOUT_SECONDS
 from app.api.models.backbone import BackboneDownload, BackboneUpload, RoundStatus, UploadAck
+from app.db.seed_backbone import SUPPORTED_ALGORITHMS
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/backbone")
@@ -17,25 +18,39 @@ def get_aggregator(request: Request):
     return request.app.state.aggregator
 
 
+def validate_algorithm_or_400(algorithm: str) -> str:
+    if algorithm not in SUPPORTED_ALGORITHMS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Unsupported algorithm '{algorithm}'. "
+                f"Supported algorithms: {list(SUPPORTED_ALGORITHMS)}"
+            ),
+        )
+    return algorithm
+
+
 @router.get(
     "/status",
     response_model=RoundStatus,
     summary="Aggregation queue status",
 )
 async def backbone_status(
-    algorithm: str = "ts",
+    algorithm: str = Query("ts", description="Algorithm to inspect."),
     db: AsyncSession = Depends(get_db),
     aggregator=Depends(get_aggregator),
 ):
-    """Returns the current state of the FL aggregation queue."""
-    latest = await aggregator.get_current_version(db)
+    """Returns the current state of the FL aggregation queue for one algorithm."""
+    algorithm = validate_algorithm_or_400(algorithm)
+
+    latest = await aggregator.get_current_version(db, algorithm=algorithm)
     current_version = latest.version if latest else 0
 
     return RoundStatus(
         current_version=current_version,
         algorithm=algorithm,
-        queued_clients=aggregator.queued_client_ids(),
-        total_rounds_completed=aggregator.rounds_completed,
+        queued_clients=aggregator.queued_client_ids(algorithm=algorithm),
+        total_rounds_completed=aggregator.rounds_completed(algorithm=algorithm),
         min_clients_per_round=MIN_CLIENTS_PER_ROUND,
         round_timeout_seconds=ROUND_TIMEOUT_SECONDS,
     )
@@ -47,21 +62,17 @@ async def backbone_status(
 )
 async def backbone_version(
     db: AsyncSession = Depends(get_db),
-    algorithm: str = "ts",
+    algorithm: str = Query("ts", description="Algorithm to inspect."),
     aggregator=Depends(get_aggregator),
 ):
-    """Return the current global backbone version (if any)."""
-    latest = await aggregator.get_current_version(db)
+    """Return the current global backbone version for the requested algorithm."""
+    algorithm = validate_algorithm_or_400(algorithm)
+
+    latest = await aggregator.get_current_version(db, algorithm=algorithm)
     if latest is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No global backbone exists yet. Run the seed script first.",
-        )
-
-    if latest.algorithm != algorithm:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No backbone found for algorithm '{algorithm}'.",
+            detail=f"No backbone found for algorithm '{algorithm}'. Run the seed script first.",
         )
 
     return {
@@ -79,24 +90,20 @@ async def backbone_version(
     responses={304: {"description": "Client already has the latest version."}},
 )
 async def download_backbone(
-    since: int = 0,
-    algorithm: str = "ts",
+    since: int = Query(0, ge=0, description="Client's current backbone version."),
+    algorithm: str = Query("ts", description="Algorithm to download."),
     db: AsyncSession = Depends(get_db),
     aggregator=Depends(get_aggregator),
 ):
-    """Return the current global backbone if a newer version exists."""
-    latest = await aggregator.get_current_version(db)
+    """Return the current global backbone for the requested algorithm if a newer version exists."""
+    algorithm = validate_algorithm_or_400(algorithm)
+
+    latest = await aggregator.get_current_version(db, algorithm=algorithm)
 
     if latest is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No global backbone exists yet. Run the seed script first.",
-        )
-
-    if latest.algorithm != algorithm:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No backbone found for algorithm '{algorithm}'.",
+            detail=f"No backbone found for algorithm '{algorithm}'. Run the seed script first.",
         )
 
     if latest.version <= since:
@@ -131,13 +138,27 @@ async def upload_backbone(
         payload.algorithm,
     )
 
+    latest = await aggregator.get_current_version(db, algorithm=payload.algorithm)
+    if latest is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No backbone found for algorithm '{payload.algorithm}'. Run the seed script first.",
+        )
+
+    # Optional strictness:
+    # reject uploads against future versions or obviously invalid versions
+    if payload.backbone_version < 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="backbone_version must be >= 1.",
+        )
+
     # The payload includes a base64-encoded, gzip-compressed JSON blob of the
     # backbone weight tensors (matching GET /backbone/model). Decode it here
     # before passing on to the aggregator.
     weights_dict = payload.backbone_weights
     if isinstance(weights_dict, str):
         from app.fl.aggregator import decode_backbone_blob
-
         weights_dict = decode_backbone_blob(weights_dict)
 
     round_triggered, queued = await aggregator.enqueue(

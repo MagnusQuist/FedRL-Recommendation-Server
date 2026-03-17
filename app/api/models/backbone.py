@@ -1,4 +1,8 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator
+
+from app.db.seed_backbone import SUPPORTED_ALGORITHMS
 
 
 # ---------------------------------------------------------------------------
@@ -20,15 +24,38 @@ class BackboneUpload(BaseModel):
     Payload sent by a Raspberry Pi client to POST /fl/upload.
 
     backbone_weights is the gzip-compressed, base64-encoded JSON representation
-    of the backbone parameter tensors (matching what GET /backbone/model returns).
+    of the backbone parameter tensors (matching what GET /fl/model returns).
+
+    Version 1 is the initial seeded global backbone for each algorithm.
     """
-    client_id: str = Field(..., description="Arbitrary client identifier — no auth required.")
-    backbone_version: int = Field(..., ge=0, description="The backbone version this upload was trained on top of.")
-    interaction_count: int = Field(..., gt=0, description="n_k — interactions logged since the last upload.")
-    algorithm: str = Field("ts", pattern="^(ts|dqn)$", description="'ts' or 'dqn'.")
+    client_id: str = Field(
+        ...,
+        description="Arbitrary client identifier — no auth required.",
+    )
+    backbone_version: int = Field(
+        ...,
+        ge=1,
+        description="The backbone version this upload was trained on top of.",
+    )
+    interaction_count: int = Field(
+        ...,
+        gt=0,
+        description="n_k — interactions logged since the last upload.",
+    )
+    algorithm: str = Field(..., description="Training algorithm used by the client.")
+
+    @field_validator("algorithm")
+    @classmethod
+    def validate_algorithm(cls, v: str) -> str:
+        if v not in SUPPORTED_ALGORITHMS:
+            raise ValueError(
+                f"Unsupported algorithm '{v}'. Supported algorithms: {SUPPORTED_ALGORITHMS}"
+            )
+        return v
+    
     backbone_weights: str = Field(
         ...,
-        description="Backbone weights as a base64-encoded gzip string (matches GET /backbone/model).",
+        description="Backbone weights as a base64-encoded gzip string (matches GET /fl/model).",
     )
 
     @field_validator("backbone_weights", mode="before")
@@ -42,8 +69,8 @@ class BackboneUpload(BaseModel):
                 decoded = _decode(v)
             except Exception as e:
                 raise ValueError(
-                    "Invalid backbone_weights: expected a base64-encoded gzip blob of JSON." 
-                    "See GET /backbone/model for the expected encoding."
+                    "Invalid backbone_weights: expected a base64-encoded gzip blob of JSON. "
+                    "See GET /fl/model for the expected encoding."
                 ) from e
         elif isinstance(v, dict):
             decoded = v
@@ -69,16 +96,16 @@ class BackboneUpload(BaseModel):
 
 class BackboneDownload(BaseModel):
     """
-    Response body for GET /fl/model when a newer backbone is available.
+    Response body for GET /fl/model when a backbone is available.
 
     backbone_weights is the gzip-compressed, base64-encoded JSON representation
     of the backbone parameter tensors. Once decoded and decompressed, it
     matches the structure that clients originally uploaded.
     """
-    version: int
-    algorithm: str
-    client_count: int
-    total_interactions: int
+    version: int = Field(..., ge=1)
+    algorithm: Literal["ts", "dqn"]
+    client_count: int = Field(..., ge=0)
+    total_interactions: int = Field(..., ge=0)
     backbone_weights: str
 
 
@@ -86,15 +113,15 @@ class UploadAck(BaseModel):
     """Response body for a successfully queued upload."""
     status: str
     client_id: str
-    queued_clients: int
+    queued_clients: int = Field(..., ge=0)
     round_triggered: bool
 
 
 class RoundStatus(BaseModel):
     """Response body for GET /fl/status — useful for debugging during experiments."""
-    current_version: int
-    algorithm: str
+    current_version: int = Field(..., ge=1)
+    algorithm: Literal["ts", "dqn"]
     queued_clients: list[str]
-    total_rounds_completed: int
-    min_clients_per_round: int
-    round_timeout_seconds: int
+    total_rounds_completed: int = Field(..., ge=0)
+    min_clients_per_round: int = Field(..., ge=1)
+    round_timeout_seconds: int = Field(..., ge=1)

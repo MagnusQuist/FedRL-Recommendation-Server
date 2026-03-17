@@ -26,13 +26,15 @@ def upgrade() -> None:
     sa.UniqueConstraint('code')
     )
     op.create_table('global_backbone_versions',
-    sa.Column('version', sa.Integer(), autoincrement=True, nullable=False),
+    sa.Column('id', sa.SmallInteger(), autoincrement=True, nullable=False),
+    sa.Column('version', sa.Integer(), nullable=False),
     sa.Column('weights_blob', sa.Text(), nullable=False, comment='gzip-compressed, base64-encoded JSON of backbone weight arrays.'),
     sa.Column('algorithm', sa.String(length=10), nullable=False, comment="Algorithm this backbone belongs to: 'ts' or 'dqn'."),
     sa.Column('client_count', sa.Integer(), nullable=False, comment='Number of clients whose uploads contributed to this round.'),
     sa.Column('total_interactions', sa.Integer(), nullable=False, comment='Sum of n_k across all contributing clients for this round.'),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-    sa.PrimaryKeyConstraint('version')
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('algorithm', 'version')
     )
     op.create_table('substitution_groups',
     sa.Column('id', sa.SmallInteger(), autoincrement=True, nullable=False),
@@ -49,7 +51,7 @@ def upgrade() -> None:
     sa.Column('category_id', sa.SmallInteger(), nullable=False),
     sa.Column('market', sa.String(), nullable=True),
     sa.Column('brand', sa.String(), nullable=True),
-    sa.Column('price_eur', sa.Numeric(precision=8, scale=2), nullable=False, comment='Price of the item in EUR.'),
+    sa.Column('price_dkk', sa.Numeric(precision=8, scale=2), nullable=False, comment='Price of the item in DKK.'),
     sa.Column('serving_size_g', sa.Numeric(precision=8, scale=2), nullable=False, comment='Nominal serving size in grams.'),
     sa.Column('co2_kg_per_kg', sa.Numeric(precision=10, scale=4), nullable=False, comment='CO2 emission per kg of product (kg CO2e/kg).'),
     sa.Column('co2_kg_per_serving', sa.Numeric(precision=10, scale=4), nullable=False, comment='Pre-computed CO2 emission for a single serving (kg CO2e).'),
