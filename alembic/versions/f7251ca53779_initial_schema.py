@@ -26,7 +26,8 @@ def upgrade() -> None:
     sa.UniqueConstraint('code')
     )
     op.create_table('global_backbone_versions',
-    sa.Column('version', sa.Integer(), autoincrement=True, nullable=False),
+    sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
+    sa.Column('version', sa.Integer(), nullable=False),
     sa.Column('weights_blob', sa.Text(), nullable=False, comment='gzip-compressed, base64-encoded JSON of backbone weight arrays.'),
     sa.Column('algorithm', sa.String(length=10), nullable=False, comment="Algorithm this backbone belongs to: 'ts' or 'dqn'."),
     sa.Column('client_count', sa.Integer(), nullable=False, comment='Number of clients whose uploads contributed to this round.'),
