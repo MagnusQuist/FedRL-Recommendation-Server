@@ -32,7 +32,7 @@ async def run_migrations() -> None:
 
 async def ensure_seed_backbones(algorithms: list[str] | None = None) -> None:
     """Ensure a version 0 backbone exists for the given algorithms."""
-    algos = algorithms or ["ts"]
+    algos = algorithms or ["ts", "dqn"]
     for algo in algos:
         logger.info("Ensuring version 0 backbone exists for algorithm='%s'...", algo)
         await seed_algorithm(algo)

@@ -16,7 +16,7 @@ class FoodItemBase(BaseModel):
     market: str | None = Field(None, description="Market / country code, e.g. 'DK'.")
     brand: str | None = Field(None, description="Optional brand name.")
 
-    price_eur: float = Field(..., ge=0.0, description="Price of the item in EUR.")
+    price_dkk: float = Field(..., ge=0.0, description="Price of the item in EUR.")
     serving_size_g: float = Field(..., ge=0.0, description="Nominal serving size in grams.")
 
     co2_kg_per_kg: float = Field(..., ge=0.0, description="CO2 emission per kg of product (kg CO2e/kg).")

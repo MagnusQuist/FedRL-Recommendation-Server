@@ -49,7 +49,7 @@ def upgrade() -> None:
     sa.Column('category_id', sa.SmallInteger(), nullable=False),
     sa.Column('market', sa.String(), nullable=True),
     sa.Column('brand', sa.String(), nullable=True),
-    sa.Column('price_eur', sa.Numeric(precision=8, scale=2), nullable=False, comment='Price of the item in EUR.'),
+    sa.Column('price_dkk', sa.Numeric(precision=8, scale=2), nullable=False, comment='Price of the item in DKK.'),
     sa.Column('serving_size_g', sa.Numeric(precision=8, scale=2), nullable=False, comment='Nominal serving size in grams.'),
     sa.Column('co2_kg_per_kg', sa.Numeric(precision=10, scale=4), nullable=False, comment='CO2 emission per kg of product (kg CO2e/kg).'),
     sa.Column('co2_kg_per_serving', sa.Numeric(precision=10, scale=4), nullable=False, comment='Pre-computed CO2 emission for a single serving (kg CO2e).'),

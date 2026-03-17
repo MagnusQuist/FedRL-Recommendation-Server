@@ -16,7 +16,7 @@ from app.api.schemas.substitution_group import SubstitutionGroup
 # `data/` lives at the repository root (not inside `app/`), so resolve from
 # the project root regardless of module location.
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DATA_FILE = REPO_ROOT / "data" / "synthetic_food_catalogue_100_items_v2.json"
+DATA_FILE = REPO_ROOT / "data" / "expanded_food_dataset_600_items_fixed.json"
 
 def _codeify(value: str) -> str:
     return (
@@ -92,7 +92,7 @@ async def seed_catalogue() -> None:
                 category_id=category.id,
                 market=row.get("market"),
                 brand=row.get("brand"),
-                price_eur=float(row["price_eur"]),
+                price_dkk=float(row["price_dkk"]),
                 serving_size_g=serving_size_g,
                 co2_kg_per_kg=float(row["co2_kg_per_kg"]),
                 co2_kg_per_serving=float(row["co2_kg_per_serving"]),
