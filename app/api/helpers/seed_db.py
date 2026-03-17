@@ -1,11 +1,11 @@
 import os
 
 from app.db.db_init import ensure_seed_backbones, ensure_seed_catalogue, run_migrations
-from fastapi import logger
+import logging
 
 from app.db.seed_status import is_database_seeded
 
-logger = logger.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 async def seed_db() -> None:
     # Running migrations on every startup is convenient for development, but may
