@@ -7,7 +7,6 @@ All endpoints are mounted under `/api/v1`.
 """
 
 from fastapi import APIRouter
-
 from app.api.routers import catalogue, backbone, health, metrics
 
 

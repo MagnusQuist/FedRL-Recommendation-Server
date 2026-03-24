@@ -1,4 +1,4 @@
-import logging
+from app.logger import logger
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
@@ -9,7 +9,6 @@ from app.fl.aggregator import MIN_CLIENTS_PER_ROUND, ROUND_TIMEOUT_SECONDS
 from app.api.models.backbone import BackboneDownload, BackboneUpload, RoundStatus, UploadAck
 from app.db.seed_backbone import SUPPORTED_ALGORITHMS
 
-logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/backbone")
 
 
@@ -65,6 +64,7 @@ async def backbone_version(
     algorithm: str = Query("ts", description="Algorithm to inspect."),
     aggregator=Depends(get_aggregator),
 ):
+    logger.info("Getting backbone verison")
     """Return the current global backbone version for the requested algorithm."""
     algorithm = validate_algorithm_or_400(algorithm)
 
@@ -130,6 +130,7 @@ async def upload_backbone(
     aggregator=Depends(get_aggregator),
 ):
     """Accept a backbone weight upload from a Raspberry Pi client."""
+    logger.info("hellol")
     logger.info(
         "Received upload from client_id='%s' backbone_version=%d n_k=%d algorithm=%s",
         payload.client_id,

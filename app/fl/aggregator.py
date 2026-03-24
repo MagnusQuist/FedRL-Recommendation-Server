@@ -23,7 +23,7 @@ import asyncio
 import base64
 import gzip
 import json
-import logging
+from app.logger import logger
 import os
 import time
 from dataclasses import dataclass, field
@@ -35,8 +35,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas.backbone import GlobalBackboneVersion
 from app.db.seed_backbone import SUPPORTED_ALGORITHMS
-
-logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Configuration — overridable via environment variables
@@ -327,3 +325,36 @@ class FLAggregator:
 
         self._queues[algorithm].clear()
         self._round_starts[algorithm] = None
+
+def decode_backbone_blob(blob: str) -> dict[str, list]:
+    logger.info("Decoding backbone weights")
+    if not isinstance(blob, str):
+        raise ValueError("backbone_weights must be a base64-encoded string")
+
+    try:
+        compressed_bytes = base64.b64decode(blob)
+    except Exception as e:
+        raise ValueError("Invalid base64 encoding in backbone_weights") from e
+
+    try:
+        json_bytes = gzip.decompress(compressed_bytes)
+    except Exception as e:
+        raise ValueError("Invalid gzip payload in backbone_weights") from e
+
+    try:
+        decoded: Any = json.loads(json_bytes.decode("utf-8"))
+    except Exception as e:
+        raise ValueError("Invalid JSON in decompressed backbone_weights") from e
+
+    if not isinstance(decoded, dict):
+        raise ValueError("Decoded backbone_weights must be a JSON object")
+
+    for key, value in decoded.items():
+        if not isinstance(key, str):
+            raise ValueError("Decoded backbone_weights contains a non-string parameter name")
+        if not isinstance(value, list):
+            raise ValueError(
+                f"Decoded backbone_weights parameter '{key}' must map to a list"
+            )
+
+    return decoded

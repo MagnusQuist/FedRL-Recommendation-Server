@@ -18,7 +18,7 @@ from __future__ import annotations
 import base64
 import gzip
 import json
-import logging
+from app.logger import logger
 import os
 from typing import Iterable
 
@@ -30,9 +30,6 @@ from app.db import AsyncSessionLocal
 from app.api.schemas.backbone import GlobalBackboneVersion
 
 load_dotenv()
-
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-logger = logging.getLogger(__name__)
 
 INPUT_DIM = 28
 HIDDEN_DIM = 64

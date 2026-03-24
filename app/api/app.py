@@ -6,8 +6,9 @@ Call `create_app()` to get a fully-configured `FastAPI` instance, or import
 `app` directly (used by ASGI servers).
 """
 
+from app.logger import logger
+
 import asyncio
-import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -19,8 +20,6 @@ from app.api.helpers.seed_db import seed_db
 from app.db import AsyncSessionLocal
 from app.fl.aggregator import FLAggregator, ROUND_TIMEOUT_SECONDS
 from app.api.routers.api import router as api_router
-
-logger = logging.getLogger(__name__)
 
 
 async def _timeout_watcher(aggregator: FLAggregator) -> None:
@@ -39,22 +38,18 @@ async def _timeout_watcher(aggregator: FLAggregator) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan context manager.
-
-    This is used by FastAPI to run startup and shutdown logic.
-    """
     logger.info("Starting DB init...")
+    try:
+        #await seed_db()
+        logger.info("DB init finished")
+    except Exception:
+        logger.exception("Startup failed during DB init.")
+        raise
 
-    # Migrations and data seeding
-    await seed_db()
-
-    # Initialize the FL aggregator and start the timeout watcher task. 
-    # The aggregator is stored in app.state so it can be accessed by the API endpoints.
     aggregator = FLAggregator()
     app.state.aggregator = aggregator
 
     watcher = asyncio.create_task(_timeout_watcher(aggregator))
-    
     yield
 
     watcher.cancel()

@@ -1,5 +1,5 @@
 import asyncio
-import logging
+from app.logger import logger
 from pathlib import Path
 
 from alembic import command
@@ -7,9 +7,6 @@ from alembic.config import Config
 
 from app.db.seed_backbone import DEFAULT_ALGORITHMS, seed_algorithms
 from app.db.seed_catalogue import seed_catalogue
-
-
-logger = logging.getLogger(__name__)
 
 
 def _alembic_config() -> Config:
@@ -23,11 +20,15 @@ def _alembic_config() -> Config:
 
 
 async def run_migrations() -> None:
-    """Bring the database schema up to date using Alembic."""
     logger.info("Running Alembic migrations to upgrade database to head...")
     cfg = _alembic_config()
-    await asyncio.to_thread(command.upgrade, cfg, "head")
-    logger.info("Alembic migrations complete.")
+
+    try:
+        await asyncio.to_thread(command.upgrade, cfg, "head")
+        logger.info("Alembic migrations complete.")
+    except Exception:
+        logger.exception("Alembic upgrade failed.")
+        raise
 
 
 async def ensure_seed_backbones(algorithms: list[str] | None = None) -> None:

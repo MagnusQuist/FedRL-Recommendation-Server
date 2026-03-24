@@ -1,6 +1,7 @@
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
+from app.logger import logger
 
 from app.db.seed_backbone import SUPPORTED_ALGORITHMS
 
@@ -61,6 +62,7 @@ class BackboneUpload(BaseModel):
     @field_validator("backbone_weights", mode="before")
     @classmethod
     def validate_backbone_blob(cls, v: str | dict[str, list]) -> str | dict[str, list]:
+        logger.info("Trying to validate backbone blob")
         """Validate that backbone_weights decodes to a valid backbone parameter dict."""
         if isinstance(v, str):
             try:
@@ -68,6 +70,7 @@ class BackboneUpload(BaseModel):
 
                 decoded = _decode(v)
             except Exception as e:
+                logger.error(e)
                 raise ValueError(
                     "Invalid backbone_weights: expected a base64-encoded gzip blob of JSON. "
                     "See GET /fl/model for the expected encoding."
