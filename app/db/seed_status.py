@@ -16,5 +16,5 @@ async def is_database_seeded() -> bool:
             result = await db.execute(text("SELECT 1 FROM categories LIMIT 1"))
             return result.first() is not None
         except Exception:
-            # Schema might not exist yet (migrations not run), or DB not ready.
+            # Schema might not exist yet (tables not created), or DB not ready.
             return False

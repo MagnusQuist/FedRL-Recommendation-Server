@@ -1,34 +1,22 @@
-import asyncio
 from app.logger import logger
-from pathlib import Path
 
-from alembic import command
-from alembic.config import Config
-
+from app.db import Base, engine
 from app.db.seed_backbone import DEFAULT_ALGORITHMS, seed_algorithms
 from app.db.seed_catalogue import seed_catalogue
 
 
-def _alembic_config() -> Config:
-    """Create an Alembic Config pointing at this project's alembic.ini.
+async def ensure_schema() -> None:
+    """Create any missing tables from ORM models.
 
-    This is resolved relative to the repository root (not the app package)
-    so it works both locally and inside Docker.
+    Does not alter or drop existing tables/columns. If you change the model
+    shape on a non-empty database, use manual SQL or reset the DB.
     """
-    project_root = Path(__file__).resolve().parents[2]
-    return Config(str(project_root / "alembic.ini"))
+    import app.api.schemas  # noqa: F401 — register all Table objects on Base.metadata
 
-
-async def run_migrations() -> None:
-    logger.info("Running Alembic migrations to upgrade database to head...")
-    cfg = _alembic_config()
-
-    try:
-        await asyncio.to_thread(command.upgrade, cfg, "head")
-        logger.info("Alembic migrations complete.")
-    except Exception:
-        logger.exception("Alembic upgrade failed.")
-        raise
+    logger.info("Ensuring database schema (create_all for missing tables)...")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("Schema check complete.")
 
 
 async def ensure_seed_backbones(algorithms: list[str] | None = None) -> None:

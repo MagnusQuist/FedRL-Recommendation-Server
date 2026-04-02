@@ -27,7 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy installed packages from builder
 COPY --from=builder /install /usr/local
 
-# Copy application source (including the app package and Alembic files)
+# Copy application source (app package, data, etc.)
 COPY . .
 
 # Non-root user for security

@@ -9,6 +9,7 @@ Call `create_app()` to get a fully-configured `FastAPI` instance, or import
 from app.logger import logger
 
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api.helpers.seed_db import seed_db
+from app.api.helpers.seed_db import ensure_schema_if_enabled, seed_data_if_needed
 from app.db import AsyncSessionLocal
 from app.fl.aggregator import FLAggregator, ROUND_TIMEOUT_SECONDS
 from app.api.routers.api import router as api_router
@@ -38,18 +39,37 @@ async def _timeout_watcher(aggregator: FLAggregator) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Schema (create_all) runs before serving; heavy catalogue seed runs in the background."""
     logger.info("Starting DB init...")
     try:
-        #await seed_db()
-        logger.info("DB init finished")
+        await ensure_schema_if_enabled()
+        logger.info("Schema phase finished.")
     except Exception:
-        logger.exception("Startup failed during DB init.")
+        logger.exception("Startup failed during schema setup.")
         raise
 
     aggregator = FLAggregator()
     app.state.aggregator = aggregator
 
     watcher = asyncio.create_task(_timeout_watcher(aggregator))
+
+    if os.getenv("AUTO_SEED_DATA_ON_STARTUP", "true").strip().lower() == "true":
+
+        async def _background_seed() -> None:
+            try:
+                await seed_data_if_needed()
+                logger.info("Background catalogue/backbone seed finished.")
+            except Exception:
+                logger.exception(
+                    "Background seed failed — ensure schema (AUTO_CREATE_SCHEMA=true) and "
+                    "`python -m app.db.seed_catalogue` if the catalogue is empty."
+                )
+
+        asyncio.create_task(_background_seed())
+        logger.info("Catalogue/backbone seed scheduled in background (server is starting).")
+    else:
+        logger.info("AUTO_SEED_DATA_ON_STARTUP=false — skipping automatic data seed.")
+
     yield
 
     watcher.cancel()

@@ -24,6 +24,21 @@ from app.api.models.substitution_group_with_items import SubstitutionGroupWithIt
 router = APIRouter(prefix="/catalogue")
 
 
+def _primary_substitution_group_id(item: FoodItem) -> int | None:
+    if not item.substitution_groups:
+        return None
+    rel = min(item.substitution_groups, key=lambda g: g.group_priority)
+    return rel.substitution_group_id
+
+
+def food_item_read_from_orm(item: FoodItem) -> FoodItemRead:
+    read = FoodItemRead.model_validate(item)
+    gid = _primary_substitution_group_id(item)
+    if gid is None:
+        return read
+    return read.model_copy(update={"substitution_group": gid})
+
+
 def _catalogue_version(items: list[FoodItem]) -> str:
     if items:
         last_updated = max(item.created_at for item in items)
@@ -50,7 +65,7 @@ async def get_catalogue(db: AsyncSession = Depends(get_db)) -> CatalogueResponse
     items = list(result.scalars().unique().all())
 
     try:
-        payload = [FoodItemRead.model_validate(item) for item in items]
+        payload = [food_item_read_from_orm(item) for item in items]
     except Exception as exc:
         print("Catalogue serialization failed:", repr(exc))
         raise
@@ -92,7 +107,7 @@ async def get_catalogue_snapshot(db: AsyncSession = Depends(get_db)) -> Catalogu
     )
     result_items = await db.execute(stmt_items)
     items = list(result_items.scalars().unique().all())
-    payload = [FoodItemRead.model_validate(item) for item in items]
+    payload = [food_item_read_from_orm(item) for item in items]
 
     # Categories and substitution groups
     categories_result = await db.execute(select(Category))
@@ -201,17 +216,28 @@ async def get_item_substitution_group(
     related_items = list(result_related.scalars().unique().all())
 
     return SubstitutionGroupItemResponse(
-        item=FoodItemRead.model_validate(item),
+        item=food_item_read_from_orm(item),
         substitution_group=group,
-        related_items=[FoodItemRead.model_validate(i) for i in related_items],
+        related_items=[food_item_read_from_orm(i) for i in related_items],
     )
 
 
-@router.get("/categories")
+@router.get(
+    "/categories",
+    summary="Leaf product categories",
+)
 async def get_categories(
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    stmt = (select(Category))
+    """Subcategories only (rows with ``parent_id`` set). Top-level aisles like *Kolonial*
+    are structural parents and are not valid ``food_items.category_id`` targets, so they
+    are omitted here. Use ``GET /catalogue/snapshot`` for the full taxonomy tree.
+    """
+    stmt = (
+        select(Category)
+        .where(Category.parent_id.is_not(None))
+        .order_by(Category.id)
+    )
     result = await db.execute(stmt)
     return list(result.scalars().unique().all())
 
@@ -249,7 +275,7 @@ async def get_category(
         version=_catalogue_version(items),
         category=category_obj.name,
         item_count=len(items),
-        items=[FoodItemRead.model_validate(item) for item in items],
+        items=[food_item_read_from_orm(item) for item in items],
     )
 
 
@@ -279,4 +305,4 @@ async def get_item(
     if item is None:
         raise HTTPException(status_code=404, detail="Food item not found")
 
-    return FoodItemRead.model_validate(item)
+    return food_item_read_from_orm(item)
