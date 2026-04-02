@@ -1,6 +1,7 @@
+from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.logger import logger
 
 from app.db.seed_backbone import SUPPORTED_ALGORITHMS
@@ -18,6 +19,31 @@ BACKBONE_PARAM_KEYS = frozenset({
     "backbone.2.weight",   # Linear(64, 32) weights  — shape (32, 64)
     "backbone.2.bias",     # Linear(64, 32) bias     — shape (32,)
 })
+
+
+class GlobalBackboneVersionRead(BaseModel):
+    """Pydantic mirror of ORM ``GlobalBackboneVersion`` in ``app.api.schemas.backbone``."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    version: int = Field(..., description="Monotonic backbone round version for this algorithm.")
+    weights_blob: str = Field(
+        ...,
+        description="gzip-compressed, base64-encoded JSON of backbone weight arrays.",
+    )
+    algorithm: str = Field(
+        ...,
+        max_length=10,
+        description="Algorithm this backbone belongs to: 'ts' or 'dqn'.",
+    )
+    client_count: int = Field(..., ge=0, description="Clients whose uploads contributed to this round.")
+    total_interactions: int = Field(
+        ...,
+        ge=0,
+        description="Sum of n_k across all contributing clients for this round.",
+    )
+    created_at: datetime
 
 
 class BackboneUpload(BaseModel):
@@ -99,12 +125,12 @@ class BackboneUpload(BaseModel):
 
 class BackboneDownload(BaseModel):
     """
-    Response body for GET /fl/model when a backbone is available.
+    Response body for GET /backbone/model when a backbone is available.
 
-    backbone_weights is the gzip-compressed, base64-encoded JSON representation
-    of the backbone parameter tensors. Once decoded and decompressed, it
-    matches the structure that clients originally uploaded.
+    Subset of ``GlobalBackboneVersionRead``: ``backbone_weights`` is the API
+    name for ORM ``weights_blob``.
     """
+
     version: int = Field(..., ge=1)
     algorithm: Literal["ts", "dqn"]
     client_count: int = Field(..., ge=0)
@@ -121,8 +147,12 @@ class UploadAck(BaseModel):
 
 
 class RoundStatus(BaseModel):
-    """Response body for GET /fl/status — useful for debugging during experiments."""
-    current_version: int = Field(..., ge=1)
+    """Response body for GET /backbone/status — useful for debugging during experiments."""
+    current_version: int = Field(
+        ...,
+        ge=0,
+        description="Latest stored backbone version; 0 if none seeded yet.",
+    )
     algorithm: Literal["ts", "dqn"]
     queued_clients: list[str]
     total_rounds_completed: int = Field(..., ge=0)

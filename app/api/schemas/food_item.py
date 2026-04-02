@@ -9,7 +9,6 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
-    Integer,
     Numeric,
     SmallInteger,
     String,
@@ -25,6 +24,8 @@ if TYPE_CHECKING:
 
 
 class FoodItem(Base):
+    """ORM row aligned with `data/product_items.json` (plus UUID id and category FK)."""
+
     __tablename__ = "food_items"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -36,7 +37,7 @@ class FoodItem(Base):
         String,
         nullable=False,
         unique=True,
-        comment="External code / synthetic ID from dataset, e.g. 'food_001'.",
+        comment="Retailer / dataset product id as string, e.g. '20807'.",
     )
     name: Mapped[str] = mapped_column(String, nullable=False)
 
@@ -44,21 +45,21 @@ class FoodItem(Base):
         SmallInteger,
         ForeignKey("categories.id", ondelete="RESTRICT"),
         nullable=False,
+        comment="FK to leaf subcategory; mirrors first entry of sub_category JSON.",
     )
     category: Mapped["Category"] = relationship(back_populates="food_items")
 
-    market: Mapped[str | None] = mapped_column(String, nullable=True)
     brand: Mapped[str | None] = mapped_column(String, nullable=True)
 
     price_dkk: Mapped[float] = mapped_column(
         Numeric(8, 2),
         nullable=False,
-        comment="Price of the item in EUR.",
+        comment="Shelf price in DKK.",
     )
-    serving_size_g: Mapped[float] = mapped_column(
-        Numeric(8, 2),
+    product_weight_in_g: Mapped[float] = mapped_column(
+        Numeric(10, 2),
         nullable=False,
-        comment="Nominal serving size in grams.",
+        comment="Package / reference weight in grams (JSON string parsed to number).",
     )
 
     co2_kg_per_kg: Mapped[float] = mapped_column(
@@ -66,40 +67,34 @@ class FoodItem(Base):
         nullable=False,
         comment="CO2 emission per kg of product (kg CO2e/kg).",
     )
-    co2_kg_per_serving: Mapped[float] = mapped_column(
-        Numeric(10, 4),
-        nullable=False,
-        comment="Pre-computed CO2 emission for a single serving (kg CO2e).",
-    )
 
-    calories_kcal: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
-    protein_g: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
-    fat_g: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
-    carbs_g: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
-    fiber_g: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
-    sugar_g: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
+    calories_per_100g: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    protein_g_per_100g: Mapped[float | None] = mapped_column(Numeric(10, 3), nullable=True)
+    fat_g_per_100g: Mapped[float | None] = mapped_column(Numeric(10, 3), nullable=True)
+    carbs_g_per_100g: Mapped[float | None] = mapped_column(Numeric(10, 3), nullable=True)
+    fiber_g_per_100g: Mapped[float | None] = mapped_column(Numeric(10, 3), nullable=True)
+    salt_g_per_100g: Mapped[float | None] = mapped_column(Numeric(10, 3), nullable=True)
 
-    processing_level: Mapped[int | None] = mapped_column(Integer, nullable=True)
-
-    is_meat: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    is_dairy: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    is_plant_based: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    is_vegan: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    is_vegetarian: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    is_gluten_free: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-
-    allergens: Mapped[list] = mapped_column(
+    main_category: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    sub_category: Mapped[list] = mapped_column(
         JSON,
         nullable=False,
         default=list,
-        comment="Array of allergen codes, e.g. ['milk', 'soy'].",
+        comment="List of subcategory integer ids from the source JSON.",
     )
-    #item_metadata: Mapped[dict] = mapped_column(
-    #    JSON,
-    #    nullable=False,
-    #    default=dict,
-    #    comment="Arbitrary item metadata from the source catalogue.",
-    #)
+
+    is_liquid: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_gluten_free: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_sugar_free: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_oekomærket_eu: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_oekomærket_dk: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_noeglehulsmaerket: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_fuldkornsmaerket: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_frozen: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_msc_maerket: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_fairtrade: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_rainforest_alliance: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_danish: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
