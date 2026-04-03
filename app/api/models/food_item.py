@@ -10,12 +10,11 @@ from app.api.models.substitution_group_with_items import SubstitutionGroupWithIt
 
 
 class FoodItemBase(BaseModel):
-    """Fields aligned with `data/product_items.json` (+ category_id FK for queries)."""
+    """Fields aligned with `data/product_items.json` (source uses `sub_category`; we expose `sub_category_ids`)."""
 
     external_code: str = Field(..., description="Product id string from dataset, e.g. '20807'.")
     name: str = Field(..., description="Display name.")
 
-    category_id: int = Field(..., description="Foreign key to categories.id (leaf subcategory).")
     brand: str | None = Field(None, description="Optional brand name.")
 
     price_dkk: float = Field(..., ge=0.0, description="Price in DKK.")
@@ -30,8 +29,14 @@ class FoodItemBase(BaseModel):
     fiber_g_per_100g: float | None = Field(None, description="Fibre g per 100 g.")
     salt_g_per_100g: float | None = Field(None, description="Salt g per 100 g.")
 
-    main_category: int = Field(..., description="Top-level category id from dataset.")
-    sub_category: list[int] = Field(..., description="Subcategory id list from dataset.")
+    main_category_id: int = Field(
+        ...,
+        description="Foreign key to categories.id (leaf subcategory); same as first entry of sub_category_ids.",
+    )
+    sub_category_ids: list[int] = Field(
+        ...,
+        description="Subcategory id list from dataset (JSON key `sub_category`); first id matches main_category_id.",
+    )
 
     is_liquid: bool = Field(False)
     is_gluten_free: bool = Field(False)
@@ -51,9 +56,9 @@ class FoodItemBase(BaseModel):
         description="Primary substitution group id (from junction; same role as JSON field).",
     )
 
-    @field_validator("sub_category", mode="before")
+    @field_validator("sub_category_ids", mode="before")
     @classmethod
-    def coerce_sub_category(cls, v: object) -> list[int]:
+    def coerce_sub_category_ids(cls, v: object) -> list[int]:
         if v is None:
             return []
         return [int(x) for x in v]

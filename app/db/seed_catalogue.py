@@ -110,7 +110,7 @@ def _bool(row: dict[str, Any], key: str) -> bool:
     return bool(row.get(key, False))
 
 
-def _build_food_item(row: dict[str, Any], category_id: int) -> FoodItem:
+def _build_food_item(row: dict[str, Any], main_category_id: int) -> FoodItem:
     weight_raw = row.get("product_weight_in_g") or "0"
     try:
         product_weight_in_g = float(weight_raw)
@@ -120,12 +120,11 @@ def _build_food_item(row: dict[str, Any], category_id: int) -> FoodItem:
         product_weight_in_g = 100.0
 
     subs_raw = row.get("sub_category") or []
-    sub_category = [int(x) for x in subs_raw]
+    sub_category_ids = [int(x) for x in subs_raw]
 
     return FoodItem(
         external_code=str(row["id"]),
         name=str(row["name"]),
-        category_id=category_id,
         brand=(str(row.get("brand") or "").strip() or None),
         price_dkk=float(row.get("price_dkk") or 0.0),
         product_weight_in_g=product_weight_in_g,
@@ -136,8 +135,8 @@ def _build_food_item(row: dict[str, Any], category_id: int) -> FoodItem:
         carbs_g_per_100g=_opt_float(row.get("carbs_g_per_100g")),
         fiber_g_per_100g=_opt_float(row.get("fiber_g_per_100g")),
         salt_g_per_100g=_opt_float(row.get("salt_g_per_100g")),
-        main_category=int(row.get("main_category", 0)),
-        sub_category=sub_category,
+        main_category_id=main_category_id,
+        sub_category_ids=sub_category_ids,
         is_liquid=_bool(row, "is_liquid"),
         is_gluten_free=_bool(row, "is_gluten_free"),
         is_sugar_free=_bool(row, "is_sugar_free"),
@@ -277,8 +276,8 @@ async def seed_catalogue() -> None:
             if not subs:
                 skipped += 1
                 continue
-            category_id = int(subs[0])
-            if category_id not in valid_category_ids:
+            main_category_id = int(subs[0])
+            if main_category_id not in valid_category_ids:
                 skipped += 1
                 continue
             sub_gid = int(row.get("substitution_group", -1))
@@ -286,7 +285,7 @@ async def seed_catalogue() -> None:
                 skipped += 1
                 continue
 
-            fi = _build_food_item(row, category_id)
+            fi = _build_food_item(row, main_category_id)
             pending_links.append((fi, sub_gid))
 
             if len(pending_links) >= BATCH_SIZE:

@@ -41,12 +41,6 @@ class FoodItem(Base):
     )
     name: Mapped[str] = mapped_column(String, nullable=False)
 
-    category_id: Mapped[int] = mapped_column(
-        SmallInteger,
-        ForeignKey("categories.id", ondelete="RESTRICT"),
-        nullable=False,
-        comment="FK to leaf subcategory; mirrors first entry of sub_category JSON.",
-    )
     category: Mapped["Category"] = relationship(back_populates="food_items")
 
     brand: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -75,12 +69,18 @@ class FoodItem(Base):
     fiber_g_per_100g: Mapped[float | None] = mapped_column(Numeric(10, 3), nullable=True)
     salt_g_per_100g: Mapped[float | None] = mapped_column(Numeric(10, 3), nullable=True)
 
-    main_category: Mapped[int] = mapped_column(SmallInteger, nullable=False)
-    sub_category: Mapped[list] = mapped_column(
+    main_category_id: Mapped[int] = mapped_column(
+        SmallInteger,
+        ForeignKey("categories.id", ondelete="RESTRICT"),
+        nullable=False,
+        comment="FK to leaf subcategory; same as first entry of sub_category_ids / source sub_category.",
+    )
+    sub_category_ids: Mapped[list] = mapped_column(
+        "sub_category_ids",
         JSON,
         nullable=False,
         default=list,
-        comment="List of subcategory integer ids from the source JSON.",
+        comment="Subcategory id list from source JSON `sub_category` (first id matches main_category_id).",
     )
 
     is_liquid: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -110,5 +110,5 @@ class FoodItem(Base):
     def __repr__(self) -> str:
         return (
             f"<FoodItem id={self.id} external_code={self.external_code!r} "
-            f"name={self.name!r} category_id={self.category_id}>"
+            f"name={self.name!r} main_category_id={self.main_category_id}>"
         )

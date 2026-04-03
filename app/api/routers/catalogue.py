@@ -230,7 +230,7 @@ async def get_categories(
     db: AsyncSession = Depends(get_db),
 ):
     """Subcategories only (rows with ``parent_id`` set). Top-level aisles like *Kolonial*
-    are structural parents and are not valid ``food_items.category_id`` targets, so they
+    are structural parents and are not valid ``food_items.main_category_id`` targets, so they
     are omitted here. Use ``GET /catalogue/snapshot`` for the full taxonomy tree.
     """
     stmt = (
@@ -257,7 +257,7 @@ async def get_category(
 
     stmt = (
         select(FoodItem)
-        .where(FoodItem.category_id == category_id)
+        .where(FoodItem.main_category_id == category_id)
         .options(
             selectinload(FoodItem.category),
             selectinload(FoodItem.substitution_groups).selectinload(
