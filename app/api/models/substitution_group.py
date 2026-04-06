@@ -1,14 +1,11 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 
-class SubstitutionGroup(BaseModel):
+class SubstitutionGroups(BaseModel):
     id: int
-    code: str = Field(..., description="Short group code, e.g. 'burger_patty'.")
-    name: str = Field(..., description="Human-readable group name, usually same as code.")
-    description: str | None = Field(
-        None,
-        description="Optional longer text describing the group semantics.",
+    name: str = Field(..., description="Group name, usually same as code.")
+    item_ids: list[int] = Field(
+        ...,
+        description="Foreign key to food_items.id.",
     )
-
-    model_config = ConfigDict(from_attributes=True)
 

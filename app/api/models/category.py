@@ -1,14 +1,14 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
+class Subcategory(BaseModel):
+    id: int
+    name: str = Field(..., description="Subcategory name, e.g. 'Milk'.")
 
 class Category(BaseModel):
     id: int
-    code: str = Field(..., description="Short category code, e.g. 'dairy_products'.")
-    name: str = Field(..., description="Human-readable category name, e.g. 'Dairy products'.")
-    parent_id: int | None = Field(
-        default=None,
-        description="Parent category id for subcategories; null for top-level aisles.",
+    name: str = Field(..., description="Category name, e.g. 'Dairy products'.")
+    subcategories: list[Subcategory] = Field(
+        default_factory=list,
+        description="Subcategories of the category.",
     )
-
-    model_config = ConfigDict(from_attributes=True)
 

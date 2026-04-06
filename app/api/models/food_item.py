@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from uuid import UUID
-from pydantic import BaseModel, Field, ConfigDict, computed_field, field_validator
+from pydantic import BaseModel, Field, ConfigDict
 
 from app.api.models.category import Category
-from app.api.models.substitution_group import SubstitutionGroup
-from app.api.models.substitution_group_with_items import SubstitutionGroupWithItems
+from app.api.models.substitution_group import SubstitutionGroups
 
 
 class FoodItemBase(BaseModel):
@@ -51,17 +50,10 @@ class FoodItemBase(BaseModel):
     is_rainforest_alliance: bool = Field(False)
     is_danish: bool = Field(False)
 
-    substitution_group: int | None = Field(
-        None,
-        description="Primary substitution group id (from junction; same role as JSON field).",
+    substitution_group_ids: list[int] = Field(
+        ...,
+        description="Foreign key to substitution_groups.id.",
     )
-
-    @field_validator("sub_category_ids", mode="before")
-    @classmethod
-    def coerce_sub_category_ids(cls, v: object) -> list[int]:
-        if v is None:
-            return []
-        return [int(x) for x in v]
 
 
 class FoodItemRead(FoodItemBase):
@@ -70,41 +62,11 @@ class FoodItemRead(FoodItemBase):
     id: UUID
     created_at: datetime
 
-    @computed_field
-    @property
-    def co2_kg_per_serving(self) -> float:
-        """kg CO2e for the full package: co2_kg_per_kg × weight_kg."""
-        return round(float(self.co2_kg_per_kg) * (float(self.product_weight_in_g) / 1000.0), 6)
-
-
-class CatalogueResponse(BaseModel):
-    """Wrapper returned by GET /catalogue — includes a version string so clients detect staleness."""
-
-    version: str = Field(..., description="Catalogue version string (ISO timestamp of last seed/update).")
-    item_count: int
-    items: list[FoodItemRead]
-
-
-class CategoryResponse(BaseModel):
-    id: int
-    version: str
-    category: str
-    item_count: int
-    items: list[FoodItemRead]
-
 
 class CatalogueSnapshot(BaseModel):
     """Combined snapshot of the catalogue (items + taxonomy)."""
 
     version: str
     categories: list["Category"]
-    substitution_groups: list["SubstitutionGroupWithItems"]
+    substitution_groups: list["SubstitutionGroups"]
     items: list[FoodItemRead]
-
-
-class SubstitutionGroupItemResponse(BaseModel):
-    """Response for `/substitution_groups/item`."""
-
-    item: FoodItemRead
-    substitution_group: "SubstitutionGroup"
-    related_items: list[FoodItemRead]

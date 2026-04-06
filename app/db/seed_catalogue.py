@@ -11,9 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import AsyncSessionLocal
 from app.logger import logger
-from app.api.schemas.category import Category
 from app.api.schemas.food_item import FoodItem
-from app.api.schemas.food_item_substitution_group import FoodItemSubstitutionGroup
 from app.api.schemas.substitution_group import SubstitutionGroup
 
 # `data/` lives at the repository root (not inside `app/`), so resolve from
@@ -182,32 +180,7 @@ async def seed_catalogue() -> None:
             logger.info("Catalogue already seeded with %d food items; skipping.", existing_count)
             return
 
-        logger.info("Catalogue seed: inserting categories…")
-        for main in mains_raw:
-            mid = int(main["id"])
-            session.add(
-                Category(
-                    id=mid,
-                    code=f"cat_{mid}",
-                    name=str(main["name"]),
-                    parent_id=None,
-                )
-            )
-        await session.flush()
-
-        for main in mains_raw:
-            mid = int(main["id"])
-            for sub in main.get("sub_categories", []):
-                sid = int(sub["id"])
-                session.add(
-                    Category(
-                        id=sid,
-                        code=f"cat_{sid}",
-                        name=str(sub["name"]),
-                        parent_id=mid,
-                    )
-                )
-        await session.flush()
+        await seed_categories(session, skip_if_nonempty=True)
 
         logger.info("Catalogue seed: inserting %d substitution groups…", len(group_by_id))
         for gid, g in sorted(group_by_id.items()):
