@@ -7,6 +7,11 @@ from .backbone import (
 )
 from .catalogue_snapshot import CatalogueSnapshotResponse
 from .catalogue_version import CatalogueVersionResponse
+from .product_label_image import (
+    PRODUCT_LABEL_EMPTY_VALUE,
+    ProductLabelImage,
+    product_label_image_stems,
+)
 from .category import CategoryCreate, CategoryDetail, CategoryRead, CategorySummary, CategoryUpdate
 from .food_item import FoodItemCreate, FoodItemDetail, FoodItemRead, FoodItemSummary, FoodItemUpdate
 from .food_item_category import FoodItemCategoryCreate, FoodItemCategoryRead
@@ -46,5 +51,8 @@ __all__ = [
     "CategorySummary", 
     "CategoryUpdate",
     "CatalogueVersionResponse",
-    "CatalogueSnapshotResponse"
+    "CatalogueSnapshotResponse",
+    "PRODUCT_LABEL_EMPTY_VALUE",
+    "ProductLabelImage",
+    "product_label_image_stems",
 ]
