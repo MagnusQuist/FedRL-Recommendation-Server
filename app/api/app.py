@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api.helpers.seed_db import ensure_models_if_enabled, seed_data_if_needed
+from app.db.helpers.seed_db import ensure_models_if_enabled, seed_data_if_needed
 from app.db import AsyncSessionLocal
 from app.fl.aggregator import FLAggregator, ROUND_TIMEOUT_SECONDS
 from app.api.routers.api import router as api_router
