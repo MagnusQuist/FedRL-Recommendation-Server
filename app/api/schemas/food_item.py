@@ -114,8 +114,7 @@ class FoodItemDetail(FoodItemRead):
     categories: list["CategorySummary"] = Field(default_factory=list)
     substitution_groups: list["SubstitutionGroupSummary"] = Field(default_factory=list)
 
-
 from .category import CategorySummary
-from .substitutionGroup import SubstitutionGroupSummary
+from .substitution_group import SubstitutionGroupSummary
 
 FoodItemDetail.model_rebuild()

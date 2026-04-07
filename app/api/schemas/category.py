@@ -35,6 +35,6 @@ class CategoryDetail(CategoryRead):
     food_items: list["FoodItemSummary"] = Field(default_factory=list)
 
 
-from .foodItem import FoodItemSummary
+from .food_item import FoodItemSummary
 
 CategoryDetail.model_rebuild()
