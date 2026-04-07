@@ -1,13 +1,50 @@
-from .food_item import FoodItem
-from .category import Category
-from .substitution_group import SubstitutionGroup
-from .food_item_substitution_group import FoodItemSubstitutionGroup
-from .backbone import GlobalBackboneVersion
+from .backbone import (
+    BackboneDownload,
+    BackboneUpload,
+    GlobalBackboneVersionRead,
+    RoundStatus,
+    UploadAck,
+)
+from .catalogue_snapshot import CatalogueSnapshotResponse
+from .catalogue_version import CatalogueVersionResponse
+from .category import CategoryCreate, CategoryDetail, CategoryRead, CategorySummary, CategoryUpdate
+from .food_item import FoodItemCreate, FoodItemDetail, FoodItemRead, FoodItemSummary, FoodItemUpdate
+from .food_item_category import FoodItemCategoryCreate, FoodItemCategoryRead
+from .substitution_group import (
+    SubstitutionGroupCreate,
+    SubstitutionGroupDetail,
+    SubstitutionGroupRead,
+    SubstitutionGroupSummary,
+    SubstitutionGroupUpdate,
+)
+from .substitution_group_item import SubstitutionGroupItemCreate, SubstitutionGroupItemRead
+
 
 __all__ = [
-    "FoodItem",
-    "Category",
-    "SubstitutionGroup",
-    "FoodItemSubstitutionGroup",
-    "GlobalBackboneVersion",
+    "BackboneDownload",
+    "BackboneUpload",
+    "GlobalBackboneVersionRead",
+    "RoundStatus",
+    "UploadAck",
+    "SubstitutionGroupItemCreate",
+    "SubstitutionGroupItemRead",
+    "SubstitutionGroupCreate",
+    "SubstitutionGroupDetail",
+    "SubstitutionGroupRead",
+    "SubstitutionGroupSummary",
+    "SubstitutionGroupUpdate",
+    "FoodItemCategoryCreate",
+    "FoodItemCategoryRead",
+    "FoodItemCreate", 
+    "FoodItemDetail", 
+    "FoodItemRead", 
+    "FoodItemSummary",
+    "FoodItemUpdate",
+    "CategoryCreate", 
+    "CategoryDetail", 
+    "CategoryRead", 
+    "CategorySummary", 
+    "CategoryUpdate",
+    "CatalogueVersionResponse",
+    "CatalogueSnapshotResponse"
 ]

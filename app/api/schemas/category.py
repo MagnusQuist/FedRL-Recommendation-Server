@@ -1,36 +1,40 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pydantic import BaseModel, Field
 
-from sqlalchemy import ForeignKey, SmallInteger, String
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-
-from app.db import Base
-
-if TYPE_CHECKING:
-    from app.api.schemas.food_item import FoodItem
+from .common import ORMModel
 
 
-class Category(Base):
-    __tablename__ = "categories"
+class CategoryBase(BaseModel):
+    name: str = Field(..., max_length=120)
+    slug: str = Field(..., max_length=140)
 
-    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, autoincrement=True)
-    code: Mapped[str] = mapped_column(String, nullable=False, unique=True)
-    name: Mapped[str] = mapped_column(String, nullable=False)
 
-    parent_id: Mapped[int | None] = mapped_column(
-        SmallInteger,
-        ForeignKey("categories.id", ondelete="RESTRICT"),
-        nullable=True,
-    )
-    parent: Mapped["Category | None"] = relationship(
-        "Category",
-        remote_side="Category.id",
-        back_populates="children",
-    )
-    children: Mapped[list["Category"]] = relationship(
-        "Category",
-        back_populates="parent",
-    )
+class CategoryCreate(CategoryBase):
+    pass
 
-    food_items: Mapped[list["FoodItem"]] = relationship(back_populates="category")
+
+class CategoryUpdate(BaseModel):
+    name: str | None = Field(None, max_length=120)
+    slug: str | None = Field(None, max_length=140)
+
+
+class CategoryRead(ORMModel):
+    category_id: int
+    name: str
+    slug: str
+
+
+class CategorySummary(ORMModel):
+    category_id: int
+    name: str
+    slug: str
+
+
+class CategoryDetail(CategoryRead):
+    food_items: list["FoodItemSummary"] = Field(default_factory=list)
+
+
+from .food_item import FoodItemSummary
+
+CategoryDetail.model_rebuild()

@@ -1,14 +1,28 @@
-from pydantic import BaseModel, ConfigDict, Field
+from __future__ import annotations
+
+from app.db import Base
 
 
-class Category(BaseModel):
-    id: int
-    code: str = Field(..., description="Short category code, e.g. 'dairy_products'.")
-    name: str = Field(..., description="Human-readable category name, e.g. 'Dairy products'.")
-    parent_id: int | None = Field(
-        default=None,
-        description="Parent category id for subcategories; null for top-level aisles.",
+from sqlalchemy import (
+    Integer,
+    String,
+)
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+class Category(Base):
+    __tablename__ = "categories"
+
+    category_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    slug: Mapped[str] = mapped_column(String(140), nullable=False, unique=True)
+
+    food_item_categories: Mapped[list[FoodItemCategory]] = relationship(
+        back_populates="category",
+        cascade="all, delete-orphan",
     )
 
-    model_config = ConfigDict(from_attributes=True)
-
+    food_items: Mapped[list["FoodItem"]] = relationship(
+        secondary="food_item_categories",
+        back_populates="categories",
+        viewonly=True,
+    )
