@@ -6,11 +6,11 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.util import defaultdict
 
-from app.api.models.catalogue_version import CatalogueVersion
-from app.api.models.category import Category
-from app.api.models.food_item import FoodItem
-from app.api.models.food_item_category import FoodItemCategory
-from app.api.models.substitution_group_item import SubstitutionGroupItem
+from app.db.models.catalogue_version import CatalogueVersion
+from app.db.models.category import Category
+from app.db.models.food_item import FoodItem
+from app.db.models.food_item_category import FoodItemCategory
+from app.db.models.substitution_group_item import SubstitutionGroupItem
 from app.api.schemas.catalogue_snapshot import CatalogueSnapshotResponse
 from app.api.schemas.catalogue_version import CatalogueVersionResponse
 from app.api.schemas.category import CategoryRead

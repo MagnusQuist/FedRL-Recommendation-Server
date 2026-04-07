@@ -11,7 +11,7 @@ async def ensure_schema() -> None:
     Does not alter or drop existing tables/columns. If you change the model
     shape on a non-empty database, use manual SQL or reset the DB.
     """
-    import app.api.models
+    import app.db.models  # Register ORM tables on Base.metadata
 
     logger.info("Ensuring database schema (create_all for missing tables)...")
     async with engine.begin() as conn:

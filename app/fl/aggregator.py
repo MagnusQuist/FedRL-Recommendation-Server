@@ -33,7 +33,7 @@ import numpy as np
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.models.backbone import GlobalBackboneVersion
+from app.db.models.backbone import GlobalBackboneVersion
 from app.db.seed_backbone import SUPPORTED_ALGORITHMS
 
 # ---------------------------------------------------------------------------
