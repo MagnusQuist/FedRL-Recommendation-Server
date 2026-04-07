@@ -36,8 +36,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-fedrl}:${POSTGRES_PASSWORD:-fedrl}@postgres:5432/${POSTGRES_DB:-fedrl}
       CATALOGUE_VERSION: ${CATALOGUE_VERSION:-2026-01-01T00:00:00Z}
       SQL_ECHO: ${SQL_ECHO:-false}
-      # SQLAlchemy create_all() for missing tables; set false if you manage schema yourself
-      AUTO_CREATE_SCHEMA: ${AUTO_CREATE_SCHEMA:-true}
+      # SQLAlchemy create_all() for missing tables; set false if you manage models yourself
+      AUTO_CREATE_MODELS: ${AUTO_CREATE_MODELS:-true}
       AUTO_SEED_DATA_ON_STARTUP: ${AUTO_SEED_DATA_ON_STARTUP:-true}
     ports:
       - "8000:8000"
