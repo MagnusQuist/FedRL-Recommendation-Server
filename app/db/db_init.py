@@ -5,18 +5,18 @@ from app.db.seed_backbone import DEFAULT_ALGORITHMS, seed_algorithms
 from app.db.seed_catalogue import seed_catalogue
 
 
-async def ensure_schema() -> None:
-    """Create any missing tables from ORM models.
+async def ensure_models() -> None:
+    """Create any missing tables from database models.
 
-    Does not alter or drop existing tables/columns. If you change the model
-    shape on a non-empty database, use manual SQL or reset the DB.
+    Does not alter or drop existing tables/columns. If you change the database model
+    shape on a non-empty database, use manual SQL or reset the database.
     """
-    import app.api.models
+    import app.db.models  # Register database models on Base.metadata
 
-    logger.info("Ensuring database schema (create_all for missing tables)...")
+    logger.info("Ensuring database models (create_all for missing tables)...")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    logger.info("Schema check complete.")
+    logger.info("Model creation complete.")
 
 
 async def ensure_seed_backbones(algorithms: list[str] | None = None) -> None:

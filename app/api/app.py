@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api.helpers.seed_db import ensure_schema_if_enabled, seed_data_if_needed
+from app.api.helpers.seed_db import ensure_models_if_enabled, seed_data_if_needed
 from app.db import AsyncSessionLocal
 from app.fl.aggregator import FLAggregator, ROUND_TIMEOUT_SECONDS
 from app.api.routers.api import router as api_router
@@ -39,13 +39,13 @@ async def _timeout_watcher(aggregator: FLAggregator) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Schema (create_all) runs before serving; heavy catalogue seed runs in the background."""
+    """Model creation (create_all) runs before serving; heavy catalogue seed runs in the background."""
     logger.info("Starting DB init...")
     try:
-        await ensure_schema_if_enabled()
-        logger.info("Schema phase finished.")
+        await ensure_models_if_enabled()
+        logger.info("Model creation phase finished.")
     except Exception:
-        logger.exception("Startup failed during schema setup.")
+        logger.exception("Startup failed during model creation.")
         raise
 
     aggregator = FLAggregator()
@@ -61,7 +61,7 @@ async def lifespan(app: FastAPI):
                 logger.info("Background catalogue/backbone seed finished.")
             except Exception:
                 logger.exception(
-                    "Background seed failed — ensure schema (AUTO_CREATE_SCHEMA=true) and "
+                    "Background seed failed — ensure models (AUTO_CREATE_MODELS=true) and "
                     "`python -m app.db.seed_catalogue` if the catalogue is empty."
                 )
 

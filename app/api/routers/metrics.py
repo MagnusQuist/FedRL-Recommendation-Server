@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.models.backbone import GlobalBackboneVersion
+from app.db.models.backbone import GlobalBackboneVersion
 from app.db import AsyncSessionLocal, get_db
 from app.db.seed_backbone import SUPPORTED_ALGORITHMS
 from app.db.seed_status import is_database_seeded
