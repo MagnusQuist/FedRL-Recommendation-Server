@@ -61,7 +61,7 @@ async def build_catalogue_snapshot(db: AsyncSession) -> CatalogueSnapshotRespons
 
     food_item_categories: dict[int, list[int]] = defaultdict(list)
     for row in food_item_categories_rows:
-        food_item_categories[row.product_id].append(row.category_id)
+        food_item_categories[row.category_id].append(row.product_id)
 
     substitution_group_items: dict[int, list[int]] = defaultdict(list)
     for row in substitution_group_items_rows:
