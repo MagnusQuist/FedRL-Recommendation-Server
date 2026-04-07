@@ -17,12 +17,12 @@ router = APIRouter(prefix="/images")
 router.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
 
 
-@router.get("/food_item/{image_id}")
-def get_food_item_image(image_id: str) -> FileResponse:
+@router.get("/food_item/{food_item_id}")
+def get_food_item_image(food_item_id: str) -> FileResponse:
     """Serve a food item image JPEG from static image directory."""
-    path = _STATIC / "food_item_images" / f"{Path(image_id).name}.jpg"
+    path = _STATIC / "food_item_images" / f"{Path(food_item_id).name}.jpg"
     if not path.is_file():
-        raise HTTPException(status_code=404, detail="Image not found")
+        raise HTTPException(status_code=404, detail="Food item image not found")
     return FileResponse(path, media_type="image/jpeg", headers=_CACHE)
 
 
@@ -34,5 +34,5 @@ def get_product_label_image(label_name: ProductLabelImage) -> FileResponse:
         raise HTTPException(status_code=404, detail="No product label images configured.")
     path = _STATIC / "product_label_images" / f"{stem}.webp"
     if not path.is_file():
-        raise HTTPException(status_code=404, detail="Image not found")
+        raise HTTPException(status_code=404, detail="Product label image not found")
     return FileResponse(path, media_type="image/webp", headers=_CACHE)
