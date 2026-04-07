@@ -21,13 +21,14 @@ class FoodItem(Base):
 
     product_weight_in_g: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    co2_kg_per_kg: Mapped[float | None] = mapped_column(Numeric(10, 3), nullable=True)
+    co2e_kg_pr_item_kg: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
+    estimated_co2e_kg_pr_item_weight_in_g: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)
     calories_per_100g: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    protein_g_per_100g: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
-    fat_g_per_100g: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
-    carbs_g_per_100g: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
-    fiber_g_per_100g: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
-    salt_g_per_100g: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    protein_g_per_100g: Mapped[float | None] = mapped_column(Numeric(10, 3), nullable=True)
+    fat_g_per_100g: Mapped[float | None] = mapped_column(Numeric(10, 3), nullable=True)
+    carbs_g_per_100g: Mapped[float | None] = mapped_column(Numeric(10, 3), nullable=True)
+    fiber_g_per_100g: Mapped[float | None] = mapped_column(Numeric(10, 3), nullable=True)
+    salt_g_per_100g: Mapped[float | None] = mapped_column(Numeric(10, 3), nullable=True)
 
     is_liquid: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     is_gluten_free: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")

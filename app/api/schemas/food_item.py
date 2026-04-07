@@ -11,7 +11,8 @@ class FoodItemBase(BaseModel):
 
     product_weight_in_g: int | None = None
 
-    co2_kg_per_kg: float | None = None
+    co2e_kg_pr_item_kg: float | None = None
+    estimated_co2e_kg_pr_item_weight_in_g: float | None = None
     calories_per_100g: int | None = None
     protein_g_per_100g: float | None = None
     fat_g_per_100g: float | None = None
@@ -45,7 +46,8 @@ class FoodItemUpdate(BaseModel):
 
     product_weight_in_g: int | None = None
 
-    co2_kg_per_kg: float | None = None
+    co2e_kg_pr_item_kg: float | None = None
+    estimated_co2e_kg_pr_item_weight_in_g: float | None = None
     calories_per_100g: int | None = None
     protein_g_per_100g: float | None = None
     fat_g_per_100g: float | None = None
@@ -76,7 +78,8 @@ class FoodItemRead(ORMModel):
 
     product_weight_in_g: int | None = None
 
-    co2_kg_per_kg: float | None = None
+    co2e_kg_pr_item_kg: float | None = None
+    estimated_co2e_kg_pr_item_weight_in_g: float | None = None
     calories_per_100g: int | None = None
     protein_g_per_100g: float | None = None
     fat_g_per_100g: float | None = None
@@ -105,7 +108,7 @@ class FoodItemSummary(ORMModel):
     name: str
     brand: str | None = None
     price_dkk: float | None = None
-    co2_kg_per_kg: float | None = None
+    estimated_co2e_kg_pr_item_weight_in_g: float | None = None
 
 
 class FoodItemDetail(FoodItemRead):
