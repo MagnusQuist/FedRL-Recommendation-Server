@@ -7,7 +7,7 @@ All endpoints are mounted under `/api/v1`.
 """
 
 from fastapi import APIRouter
-from app.api.routers import catalogue, backbone, health, metrics
+from app.api.routers import catalogue, backbone, health, metrics, images
 
 
 router = APIRouter(prefix="/api/v1")
@@ -15,6 +15,7 @@ router = APIRouter(prefix="/api/v1")
 # Main API endpoints
 router.include_router(health.router, tags=["Health"])
 router.include_router(catalogue.router, tags=["Catalogue"])
+router.include_router(images.router, tags=["Images"])
 router.include_router(backbone.router, tags=["Backbone"])
 
 # Developer-only endpoints
