@@ -2,10 +2,7 @@ from __future__ import annotations
 
 from app.db import Base
 
-from decimal import Decimal
-
 from sqlalchemy import (
-    BigInteger,
     Boolean,
     Integer,
     Numeric,
@@ -17,20 +14,20 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 class FoodItem(Base):
     __tablename__ = "food_items"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     brand: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     product_weight_in_g: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    co2_kg_per_kg: Mapped[Decimal | None] = mapped_column(Numeric(10, 3), nullable=True)
+    co2_kg_per_kg: Mapped[float | None] = mapped_column(Numeric(10, 3), nullable=True)
     calories_per_100g: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    protein_g_per_100g: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
-    fat_g_per_100g: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
-    carbs_g_per_100g: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
-    fiber_g_per_100g: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
-    salt_g_per_100g: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    protein_g_per_100g: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    fat_g_per_100g: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    carbs_g_per_100g: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    fiber_g_per_100g: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    salt_g_per_100g: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
 
     is_liquid: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     is_gluten_free: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
@@ -45,7 +42,7 @@ class FoodItem(Base):
     is_rainforest_alliance: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     is_danish: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
-    price_dkk: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    price_dkk: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
 
     food_item_categories: Mapped[list[FoodItemCategory]] = relationship(
         back_populates="food_item",

@@ -4,7 +4,7 @@ from app.db import Base
 
 
 from sqlalchemy import (
-    BigInteger,
+    String,
     ForeignKey,
     Integer,
     Index,
@@ -15,8 +15,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 class FoodItemCategory(Base):
     __tablename__ = "food_item_categories"
 
-    product_id: Mapped[int] = mapped_column(
-        BigInteger,
+    product_id: Mapped[str] = mapped_column(
+        String(255),
         ForeignKey("food_items.id", ondelete="CASCADE"),
         primary_key=True,
     )

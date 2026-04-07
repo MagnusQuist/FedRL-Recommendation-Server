@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from decimal import Decimal
-
 from pydantic import BaseModel, Field
 
 from .common import ORMModel
@@ -13,13 +11,13 @@ class FoodItemBase(BaseModel):
 
     product_weight_in_g: int | None = None
 
-    co2_kg_per_kg: Decimal | None = None
+    co2_kg_per_kg: float | None = None
     calories_per_100g: int | None = None
-    protein_g_per_100g: Decimal | None = None
-    fat_g_per_100g: Decimal | None = None
-    carbs_g_per_100g: Decimal | None = None
-    fiber_g_per_100g: Decimal | None = None
-    salt_g_per_100g: Decimal | None = None
+    protein_g_per_100g: float | None = None
+    fat_g_per_100g: float | None = None
+    carbs_g_per_100g: float | None = None
+    fiber_g_per_100g: float | None = None
+    salt_g_per_100g: float | None = None
 
     is_liquid: bool = False
     is_gluten_free: bool = False
@@ -34,11 +32,11 @@ class FoodItemBase(BaseModel):
     is_rainforest_alliance: bool = False
     is_danish: bool = False
 
-    price_dkk: Decimal | None = None
+    price_dkk: float | None = None
 
 
 class FoodItemCreate(FoodItemBase):
-    id: int
+    id: str
 
 
 class FoodItemUpdate(BaseModel):
@@ -47,13 +45,13 @@ class FoodItemUpdate(BaseModel):
 
     product_weight_in_g: int | None = None
 
-    co2_kg_per_kg: Decimal | None = None
+    co2_kg_per_kg: float | None = None
     calories_per_100g: int | None = None
-    protein_g_per_100g: Decimal | None = None
-    fat_g_per_100g: Decimal | None = None
-    carbs_g_per_100g: Decimal | None = None
-    fiber_g_per_100g: Decimal | None = None
-    salt_g_per_100g: Decimal | None = None
+    protein_g_per_100g: float | None = None
+    fat_g_per_100g: float | None = None
+    carbs_g_per_100g: float | None = None
+    fiber_g_per_100g: float | None = None
+    salt_g_per_100g: float | None = None
 
     is_liquid: bool | None = None
     is_gluten_free: bool | None = None
@@ -68,23 +66,23 @@ class FoodItemUpdate(BaseModel):
     is_rainforest_alliance: bool | None = None
     is_danish: bool | None = None
 
-    price_dkk: Decimal | None = None
+    price_dkk: float | None = None
 
 
 class FoodItemRead(ORMModel):
-    id: int
+    id: str
     name: str
     brand: str | None = None
 
     product_weight_in_g: int | None = None
 
-    co2_kg_per_kg: Decimal | None = None
+    co2_kg_per_kg: float | None = None
     calories_per_100g: int | None = None
-    protein_g_per_100g: Decimal | None = None
-    fat_g_per_100g: Decimal | None = None
-    carbs_g_per_100g: Decimal | None = None
-    fiber_g_per_100g: Decimal | None = None
-    salt_g_per_100g: Decimal | None = None
+    protein_g_per_100g: float | None = None
+    fat_g_per_100g: float | None = None
+    carbs_g_per_100g: float | None = None
+    fiber_g_per_100g: float | None = None
+    salt_g_per_100g: float | None = None
 
     is_liquid: bool
     is_gluten_free: bool
@@ -99,15 +97,15 @@ class FoodItemRead(ORMModel):
     is_rainforest_alliance: bool
     is_danish: bool
 
-    price_dkk: Decimal | None = None
+    price_dkk: float | None = None
 
 
 class FoodItemSummary(ORMModel):
-    id: int
+    id: str
     name: str
     brand: str | None = None
-    price_dkk: Decimal | None = None
-    co2_kg_per_kg: Decimal | None = None
+    price_dkk: float | None = None
+    co2_kg_per_kg: float | None = None
 
 
 class FoodItemDetail(FoodItemRead):

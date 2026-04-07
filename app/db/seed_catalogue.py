@@ -4,7 +4,6 @@ import asyncio
 import csv
 import json
 import os
-from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -62,15 +61,15 @@ def _to_int(value: Any) -> int | None:
     return int(str(value).replace(".", "").strip()) if str(value).isdigit() else int(str(value).strip())
 
 
-def _to_decimal(value: Any) -> Decimal | None:
+def _to_float(value: Any) -> float | None:
     value = _clean_value(value)
     if value is None:
         return None
-    if isinstance(value, Decimal):
+    if isinstance(value, float):
         return value
     if isinstance(value, (int, float)):
-        return Decimal(str(value))
-    return Decimal(str(value).replace(",", ".").strip())
+        return float(str(value))
+    return float(str(value).replace(",", ".").strip())
 
 
 def _to_bool(value: Any) -> bool:
@@ -151,7 +150,7 @@ def _load_food_item_categories(data_dir: Path) -> list[dict[str, Any]]:
     rows = _read_csv_rows(data_dir / "food_item_categories.csv")
     return [
         {
-            "product_id": _to_int(row["product_id"]),
+            "product_id": _to_str(row["product_id"]),
             "category_id": _to_int(row["category_id"]),
         }
         for row in rows
@@ -174,7 +173,7 @@ def _load_substitution_group_items(data_dir: Path) -> list[dict[str, Any]]:
     return [
         {
             "substitution_group_id": _to_int(row["substitution_group_id"]),
-            "product_id": _to_int(row["product_id"]),
+            "product_id": _to_str(row["product_id"]),
         }
         for row in rows
     ]
@@ -187,17 +186,17 @@ def _load_food_items(data_dir: Path) -> list[dict[str, Any]]:
     for row in rows:
         normalized.append(
             {
-                "id": _to_int(row.get("id")),
+                "id": _to_str(row.get("id")),
                 "name": _to_str(row.get("name")),
                 "brand": _to_str(row.get("brand")),
                 "product_weight_in_g": _to_int(row.get("product_weight_in_g")),
-                "co2_kg_per_kg": _to_decimal(row.get("co2_kg_per_kg")),
+                "co2_kg_per_kg": _to_float(row.get("co2_kg_per_kg")),
                 "calories_per_100g": _to_int(row.get("calories_per_100g")),
-                "protein_g_per_100g": _to_decimal(row.get("protein_g_per_100g")),
-                "fat_g_per_100g": _to_decimal(row.get("fat_g_per_100g")),
-                "carbs_g_per_100g": _to_decimal(row.get("carbs_g_per_100g")),
-                "fiber_g_per_100g": _to_decimal(row.get("fiber_g_per_100g")),
-                "salt_g_per_100g": _to_decimal(row.get("salt_g_per_100g")),
+                "protein_g_per_100g": _to_float(row.get("protein_g_per_100g")),
+                "fat_g_per_100g": _to_float(row.get("fat_g_per_100g")),
+                "carbs_g_per_100g": _to_float(row.get("carbs_g_per_100g")),
+                "fiber_g_per_100g": _to_float(row.get("fiber_g_per_100g")),
+                "salt_g_per_100g": _to_float(row.get("salt_g_per_100g")),
                 "is_liquid": _to_bool(row.get("is_liquid")),
                 "is_gluten_free": _to_bool(row.get("is_gluten_free")),
                 "is_sugar_free": _to_bool(row.get("is_sugar_free")),
@@ -210,7 +209,7 @@ def _load_food_items(data_dir: Path) -> list[dict[str, Any]]:
                 "is_fairtrade": _to_bool(row.get("is_fairtrade")),
                 "is_rainforest_alliance": _to_bool(row.get("is_rainforest_alliance")),
                 "is_danish": _to_bool(row.get("is_danish")),
-                "price_dkk": _to_decimal(row.get("price_dkk")),
+                "price_dkk": _to_float(row.get("price_dkk")),
             }
         )
 

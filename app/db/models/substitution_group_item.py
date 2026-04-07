@@ -3,7 +3,7 @@ from __future__ import annotations
 from app.db import Base
 
 from sqlalchemy import (
-    BigInteger,
+    String,
     ForeignKey,
     Integer,
     Index,
@@ -18,8 +18,8 @@ class SubstitutionGroupItem(Base):
         ForeignKey("substitution_groups.substitution_group_id", ondelete="CASCADE"),
         primary_key=True,
     )
-    product_id: Mapped[int] = mapped_column(
-        BigInteger,
+    product_id: Mapped[str] = mapped_column(
+        String(255),
         ForeignKey("food_items.id", ondelete="CASCADE"),
         primary_key=True,
     )
