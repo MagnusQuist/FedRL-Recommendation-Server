@@ -1,27 +1,15 @@
-from .backbone import (
-    BackboneDownload,
-    BackboneUpload,
-    GlobalBackboneVersionRead,
-    RoundStatus,
-    UploadAck,
-)
+from .backbone import GlobalBackboneVersion
 from .category import Category
-from .food_item import (
-    CatalogueSnapshot,
-    FoodItemBase,
-    FoodItemRead,
-)
-from .substitution_group import SubstitutionGroups
+from .foodItem import FoodItem
+from .foodItemCategory import FoodItemCategory
+from .substitutionGroup import SubstitutionGroup
+from .substitutionGroupItem import SubstitutionGroupItem
 
 __all__ = [
-    "BackboneDownload",
-    "BackboneUpload",
-    "CatalogueSnapshot",
+    "GlobalBackboneVersion",
     "Category",
-    "FoodItemBase",
-    "FoodItemRead",
-    "GlobalBackboneVersionRead",
-    "RoundStatus",
-    "SubstitutionGroups",
-    "UploadAck",
+    "FoodItem",
+    "FoodItemCategory",
+    "SubstitutionGroup",
+    "SubstitutionGroupItem",
 ]

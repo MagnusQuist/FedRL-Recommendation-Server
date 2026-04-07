@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.fl.aggregator import MIN_CLIENTS_PER_ROUND, ROUND_TIMEOUT_SECONDS
-from app.api.models.backbone import BackboneDownload, BackboneUpload, RoundStatus, UploadAck
+from app.api.schemas.backbone import BackboneDownload, BackboneUpload, RoundStatus, UploadAck
 from app.db.seed_backbone import SUPPORTED_ALGORITHMS
 
 router = APIRouter(prefix="/backbone")

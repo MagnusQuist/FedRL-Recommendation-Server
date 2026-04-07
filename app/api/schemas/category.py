@@ -1,18 +1,40 @@
 from __future__ import annotations
 
-from sqlalchemy import ForeignKey, SmallInteger, String
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from pydantic import BaseModel, Field
 
-from app.db import Base
+from .common import ORMModel
 
-class Category(Base):
-    __tablename__ = "categories"
 
-    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String, nullable=False)
+class CategoryBase(BaseModel):
+    name: str = Field(..., max_length=120)
+    slug: str = Field(..., max_length=140)
 
-    subcategories: Mapped[list[int]] | None = relationship(
-        "Subcategory",
-        remote_side="Subcategory.id",
-        back_populates="category",
-    )
+
+class CategoryCreate(CategoryBase):
+    pass
+
+
+class CategoryUpdate(BaseModel):
+    name: str | None = Field(None, max_length=120)
+    slug: str | None = Field(None, max_length=140)
+
+
+class CategoryRead(ORMModel):
+    category_id: int
+    name: str
+    slug: str
+
+
+class CategorySummary(ORMModel):
+    category_id: int
+    name: str
+    slug: str
+
+
+class CategoryDetail(CategoryRead):
+    food_items: list["FoodItemSummary"] = Field(default_factory=list)
+
+
+from .foodItem import FoodItemSummary
+
+CategoryDetail.model_rebuild()

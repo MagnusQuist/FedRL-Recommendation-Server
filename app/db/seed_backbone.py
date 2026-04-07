@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 from sqlalchemy import select
 
 from app.db import AsyncSessionLocal
-from app.api.schemas.backbone import GlobalBackboneVersion
+from app.api.models.backbone import GlobalBackboneVersion
 
 load_dotenv()
 
