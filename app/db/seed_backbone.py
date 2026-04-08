@@ -31,7 +31,7 @@ from app.db.models.backbone import GlobalBackboneVersion
 
 load_dotenv()
 
-INPUT_DIM = 28
+INPUT_DIM = 16
 HIDDEN_DIM = 64
 OUTPUT_DIM = 32
 INITIAL_VERSION = 1
