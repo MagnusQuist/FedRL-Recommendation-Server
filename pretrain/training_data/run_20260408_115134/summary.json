@@ -1,0 +1,21 @@
+{
+  "trained_at_utc": "2026-04-08T11:51:47.836205+00:00",
+  "options": {
+    "epochs": 300,
+    "lr": 0.001001,
+    "batch_size": 256,
+    "patience": 20,
+    "seed": 42,
+    "no_save": false
+  },
+  "result": {
+    "dataset_samples": 32898,
+    "feature_dim": 16,
+    "train_samples": 23358,
+    "val_samples": 9540,
+    "best_epoch": 20,
+    "best_val_loss": 0.009285639704691259,
+    "saved_to_db": true,
+    "save_plot": "/app/pretrain/training_data/run_20260408_115134/training_loss.png"
+  }
+}

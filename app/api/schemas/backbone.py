@@ -35,7 +35,7 @@ class GlobalBackboneVersionRead(BaseModel):
     algorithm: str = Field(
         ...,
         max_length=10,
-        description="Algorithm this backbone belongs to: 'ts' or 'dqn'.",
+        description="Algorithm this backbone belongs to: 'ts'.",
     )
     client_count: int = Field(..., ge=0, description="Clients whose uploads contributed to this round.")
     total_interactions: int = Field(
@@ -132,7 +132,7 @@ class BackboneDownload(BaseModel):
     """
 
     version: int = Field(..., ge=1)
-    algorithm: Literal["ts", "dqn"]
+    algorithm: Literal["ts"]
     client_count: int = Field(..., ge=0)
     total_interactions: int = Field(..., ge=0)
     backbone_weights: str
@@ -153,7 +153,7 @@ class RoundStatus(BaseModel):
         ge=0,
         description="Latest stored backbone version; 0 if none seeded yet.",
     )
-    algorithm: Literal["ts", "dqn"]
+    algorithm: Literal["ts"]
     queued_clients: list[str]
     total_rounds_completed: int = Field(..., ge=0)
     min_clients_per_round: int = Field(..., ge=1)

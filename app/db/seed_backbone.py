@@ -8,8 +8,8 @@ point that Raspberry Pi clients download before they have accumulated enough
 interactions to trigger a FedAvg round.
 
 Environment variables (.env supported):
-    SUPPORTED_BACKBONE_ALGORITHMS=ts,dqn
-    DEFAULT_BACKBONE_ALGORITHMS=ts,dqn
+    SUPPORTED_BACKBONE_ALGORITHMS=ts
+    DEFAULT_BACKBONE_ALGORITHMS=ts
     BACKBONE_INIT_SEED=42
 """
 
@@ -36,8 +36,8 @@ HIDDEN_DIM = 64
 OUTPUT_DIM = 32
 INITIAL_VERSION = 1
 
-FALLBACK_SUPPORTED_ALGORITHMS = ("ts", "dqn")
-FALLBACK_DEFAULT_ALGORITHMS = ("ts", "dqn")
+FALLBACK_SUPPORTED_ALGORITHMS = ("ts",)
+FALLBACK_DEFAULT_ALGORITHMS = ("ts",)
 FALLBACK_BASE_SEED = 42
 
 
@@ -94,8 +94,7 @@ def init_backbone_weights(seed: int) -> dict[str, np.ndarray]:
     """
     Create a freshly initialised backbone state dict.
 
-    Using the same seed for TS and DQN ensures both algorithm families begin
-    from the same initial parameter state for fair comparison.
+    Initialize the TS backbone parameter state.
     """
     rng = np.random.default_rng(seed)
 

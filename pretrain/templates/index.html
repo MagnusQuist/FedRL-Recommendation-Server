@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FedRL Pretrain Dashboard</title>
+  <style>
+    :root {
+      --bg: #eef1f5;
+      --panel: #f8fafc;
+      --panel-border: #d8dee7;
+      --text: #111827;
+      --muted: #6b7280;
+      --accent: #6b8fb6;
+      --ok: #2e8b57;
+      --warn: #b7791f;
+      --err: #c53030;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, Segoe UI, Roboto, Arial, sans-serif; background: var(--bg); color: var(--text); }
+    .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+    .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+    .title { margin: 0; font-size: 1.4rem; }
+    .pill { border: 1px solid var(--panel-border); border-radius: 999px; padding: 6px 10px; color: var(--muted); font-size: 0.9rem; display: inline-block; }
+    .layout { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; }
+    .card { background: var(--panel); border: 1px solid var(--panel-border); border-radius: 14px; padding: 14px; margin-bottom: 14px; }
+    .card h2 { margin-top: 0; font-size: 1rem; color: #1f2937; letter-spacing: 0.04em; text-transform: uppercase; }
+    .status-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+    .metric { background: #ffffff; border: 1px solid var(--panel-border); border-radius: 10px; padding: 10px; }
+    .metric .k { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; }
+    .metric .v { font-size: 0.88rem; margin-top: 6px; word-break: break-word; }
+    .status-badge { font-weight: 700; text-transform: uppercase; }
+    .status-idle { color: var(--muted); }
+    .status-running { color: var(--warn); }
+    .status-success { color: var(--ok); }
+    .status-failed { color: var(--err); }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .mode-switch { display: inline-flex; border: 1px solid var(--panel-border); border-radius: 999px; padding: 2px; margin-bottom: 12px; background: #fff; }
+    .mode-btn { border: none; background: transparent; color: var(--muted); border-radius: 999px; padding: 7px 12px; cursor: pointer; font-weight: 600; margin: 0; }
+    .mode-btn.active { background: #111827; color: #fff; }
+    .mode-panel { display: none; }
+    .mode-panel.active { display: block; }
+    label { display: block; font-size: 0.82rem; color: var(--muted); margin-bottom: 4px; }
+    .label-row { display: inline-flex; align-items: center; gap: 6px; }
+    .help-tip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 1px solid var(--panel-border);
+      color: #52627a;
+      font-size: 0.72rem;
+      font-weight: 700;
+      background: #fff;
+      cursor: help;
+      user-select: none;
+    }
+    input[type="number"] { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--panel-border); background: #ffffff; color: var(--text); }
+    button { background: #111827; border: none; border-radius: 999px; color: #ffffff; font-weight: 700; padding: 10px 16px; cursor: pointer; margin-top: 8px; }
+    .runs-list { max-height: 360px; overflow: auto; display: grid; gap: 8px; }
+    .run-item { border: 1px solid var(--panel-border); border-radius: 10px; padding: 10px; cursor: pointer; background: #ffffff; }
+    .run-item.active { border-color: var(--accent); background: #edf3f8; }
+    .run-id { font-family: Consolas, monospace; font-size: 0.82rem; }
+    .run-meta { color: var(--muted); font-size: 0.8rem; margin-top: 4px; }
+    .best-run-box {
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      background: #ffffff;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+    .best-run-title { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; }
+    .best-run-id { font-family: Consolas, monospace; margin-top: 6px; }
+    .best-run-loss { font-size: 0.9rem; margin-top: 6px; }
+    .links a { color: #446b93; text-decoration: none; margin-right: 10px; font-size: 0.85rem; }
+    img.plot { width: 100%; max-width: 100%; border-radius: 8px; border: 1px solid var(--panel-border); margin-top: 10px; cursor: zoom-in; }
+    .plot-hint { color: var(--muted); font-size: 0.78rem; margin-top: 6px; }
+    pre { background: #ffffff; border: 1px solid var(--panel-border); color: #1f2937; padding: 12px; border-radius: 8px; max-height: 360px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+    .lightbox {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(17, 24, 39, 0.75);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .lightbox.open { display: flex; }
+    .lightbox-inner {
+      background: #ffffff;
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      max-width: min(96vw, 1500px);
+      max-height: 92vh;
+      width: 100%;
+      padding: 12px;
+    }
+    .lightbox-topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .lightbox-topbar button { margin-top: 0; padding: 8px 12px; font-size: 0.85rem; }
+    .lightbox-image-wrap { max-height: calc(92vh - 72px); overflow: auto; }
+    .lightbox-image { width: 100%; height: auto; border: 1px solid var(--panel-border); border-radius: 8px; }
+    @media (max-width: 1050px) {
+      .layout { grid-template-columns: 1fr; }
+      .status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="topbar">
+      <h1 class="title">FedRL Pretrain Dashboard</h1>
+      <div class="pill">Run history + live monitor</div>
+    </div>
+
+    <div class="layout">
+      <section>
+        <div class="card">
+          <h2>Start New Training</h2>
+          <div class="mode-switch">
+            <button class="mode-btn active" id="single_mode_btn" type="button">Single Run</button>
+            <button class="mode-btn" id="sweep_mode_btn" type="button">Range Sweep (Top 5)</button>
+          </div>
+
+          <div id="single_mode_panel" class="mode-panel active">
+            <form method="post" action="/train">
+              <div class="grid">
+                <div>
+                  <label for="epochs"><span class="label-row">Epochs <span class="help-tip" title="Maximum number of training passes through the dataset. Higher can improve fit but takes longer and may overfit. Default: 300.">i</span></span></label>
+                  <input id="epochs" name="epochs" type="number" min="1" value="300" required />
+                </div>
+                <div>
+                  <label for="lr"><span class="label-row">Learning Rate <span class="help-tip" title="Step size for model updates. Too high can be unstable, too low learns slowly. Typical range: 1e-4 to 1e-3. Default: 0.001.">i</span></span></label>
+                  <input id="lr" name="lr" type="number" step="any" min="0" value="0.001" required />
+                </div>
+                <div>
+                  <label for="batch_size"><span class="label-row">Batch Size <span class="help-tip" title="Number of samples per optimizer step. Larger batches are smoother/faster per epoch but use more memory. Default: 256.">i</span></span></label>
+                  <input id="batch_size" name="batch_size" type="number" min="1" value="256" required />
+                </div>
+                <div>
+                  <label for="patience"><span class="label-row">Patience <span class="help-tip" title="Early-stopping window. Training stops if validation loss does not improve for this many epochs. Default: 20.">i</span></span></label>
+                  <input id="patience" name="patience" type="number" min="1" value="20" required />
+                </div>
+                <div>
+                  <label for="seed"><span class="label-row">Seed <span class="help-tip" title="Random seed for reproducibility. Same data + same seed gives comparable runs. Default: 42.">i</span></span></label>
+                  <input id="seed" name="seed" type="number" value="42" required />
+                </div>
+              </div>
+              <p><label><span class="label-row"><input name="no_save" type="checkbox" /> Dry run (`--no-save`) <span class="help-tip" title="Runs training but skips writing backbone weights to the database. Artifacts in training_data are still saved for comparison.">i</span></span></label></p>
+              <button type="submit">Start Training</button>
+            </form>
+          </div>
+
+          <div id="sweep_mode_panel" class="mode-panel">
+            <form method="post" action="/sweep">
+              <div class="grid">
+                <div><label>Epochs Min</label><input name="epochs_min" type="number" value="150" min="1" required /></div>
+                <div><label>Epochs Max</label><input name="epochs_max" type="number" value="350" min="1" required /></div>
+                <div><label>Epochs Step</label><input name="epochs_step" type="number" value="100" min="1" required /></div>
+                <div><label>LR Min</label><input name="lr_min" type="number" step="any" value="0.0002" min="0" required /></div>
+                <div><label>LR Max</label><input name="lr_max" type="number" step="any" value="0.0014" min="0" required /></div>
+                <div><label>LR Step</label><input name="lr_step" type="number" step="any" value="0.0004" min="0.0000001" required /></div>
+                <div><label>Batch Min</label><input name="batch_min" type="number" value="128" min="1" required /></div>
+                <div><label>Batch Max</label><input name="batch_max" type="number" value="384" min="1" required /></div>
+                <div><label>Batch Step</label><input name="batch_step" type="number" value="128" min="1" required /></div>
+                <div><label>Patience Min</label><input name="patience_min" type="number" value="10" min="1" required /></div>
+                <div><label>Patience Max</label><input name="patience_max" type="number" value="30" min="1" required /></div>
+                <div><label>Patience Step</label><input name="patience_step" type="number" value="10" min="1" required /></div>
+                <div><label>Seed Min</label><input name="seed_min" type="number" value="42" required /></div>
+                <div><label>Seed Max</label><input name="seed_max" type="number" value="44" required /></div>
+                <div><label>Seed Step</label><input name="seed_step" type="number" value="1" min="1" required /></div>
+              </div>
+              <p><label><input name="no_save" type="checkbox" checked /> Dry run (recommended for sweeps)</label></p>
+              <button type="submit">Start Sweep</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Live Job Status</h2>
+          <div class="status-grid">
+            <div class="metric"><div class="k">Status</div><div class="v"><span class="status-badge" id="status">{{ status.status }}</span></div></div>
+            <div class="metric"><div class="k">Job Type</div><div class="v" id="job_type">{{ status.job_type or "-" }}</div></div>
+            <div class="metric"><div class="k">Started</div><div class="v" id="started_at">{{ status.started_at or "-" }}</div></div>
+            <div class="metric"><div class="k">Finished</div><div class="v" id="finished_at">{{ status.finished_at or "-" }}</div></div>
+            <div class="metric"><div class="k">Error</div><div class="v" id="last_error">{{ status.last_error or "-" }}</div></div>
+            <div class="metric"><div class="k">Progress</div><div class="v" id="sweep_progress">-</div></div>
+          </div>
+          <pre id="last_result">{{ status.last_result or {} }}</pre>
+        </div>
+
+        <div class="card">
+          <h2>Live Logs</h2>
+          <pre id="logs">Loading logs...</pre>
+        </div>
+      </section>
+
+      <aside>
+        <div class="card">
+          <h2>Previous Runs</h2>
+          <div class="best-run-box">
+            <div class="best-run-title">Best Run (Lowest Val Loss)</div>
+            <div id="best_run_id" class="best-run-id">{{ best_run.id if best_run else "No eligible runs yet" }}</div>
+            <div id="best_run_loss" class="best-run-loss">{% if best_run %}best_val_loss: {{ best_run.best_val_loss }}{% else %}best_val_loss: -{% endif %}</div>
+            <p class="links" id="best_run_links"></p>
+          </div>
+          <div class="runs-list" id="runs_list">
+            {% for run in runs %}
+            <div class="run-item" data-run-id="{{ run.id }}">
+              <div class="run-id">{{ run.id }}</div>
+              <div class="run-meta">best_val_loss: {{ run.best_val_loss if run.best_val_loss is not none else "-" }}</div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="card">
+          <h2>Selected Run</h2>
+          <div id="selected_run_id" class="pill">No run selected</div>
+          <p class="links" id="selected_links"></p>
+          <pre id="selected_summary">Select a run to view summary.</pre>
+          <img id="selected_plot" class="plot" alt="Training plot" style="display:none;" />
+          <div class="plot-hint">Click plot to open larger view.</div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <div id="plot_lightbox" class="lightbox">
+    <div class="lightbox-inner">
+      <div class="lightbox-topbar">
+        <strong>Training Loss Plot</strong>
+        <button id="close_lightbox" type="button">Close</button>
+      </div>
+      <div class="lightbox-image-wrap">
+        <img id="lightbox_image" class="lightbox-image" alt="Large training plot preview" />
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const runsListEl = document.getElementById('runs_list');
+    const selectedPlotEl = document.getElementById('selected_plot');
+    const lightboxEl = document.getElementById('plot_lightbox');
+    const lightboxImageEl = document.getElementById('lightbox_image');
+    const closeLightboxEl = document.getElementById('close_lightbox');
+    const bestRunIdEl = document.getElementById('best_run_id');
+    const bestRunLossEl = document.getElementById('best_run_loss');
+    const bestRunLinksEl = document.getElementById('best_run_links');
+    const singleModeBtn = document.getElementById('single_mode_btn');
+    const sweepModeBtn = document.getElementById('sweep_mode_btn');
+    const singleModePanel = document.getElementById('single_mode_panel');
+    const sweepModePanel = document.getElementById('sweep_mode_panel');
+    let selectedRunId = null;
+
+    function setMode(mode) {
+      const single = mode === 'single';
+      singleModeBtn.classList.toggle('active', single);
+      sweepModeBtn.classList.toggle('active', !single);
+      singleModePanel.classList.toggle('active', single);
+      sweepModePanel.classList.toggle('active', !single);
+    }
+
+    singleModeBtn.addEventListener('click', () => setMode('single'));
+    sweepModeBtn.addEventListener('click', () => setMode('sweep'));
+
+    selectedPlotEl.addEventListener('click', () => {
+      if (!selectedPlotEl.src || selectedPlotEl.style.display === 'none') return;
+      lightboxImageEl.src = selectedPlotEl.src;
+      lightboxEl.classList.add('open');
+    });
+
+    closeLightboxEl.addEventListener('click', () => {
+      lightboxEl.classList.remove('open');
+    });
+
+    lightboxEl.addEventListener('click', (event) => {
+      if (event.target === lightboxEl) {
+        lightboxEl.classList.remove('open');
+      }
+    });
+
+    function renderStatusClass(status) {
+      statusEl.className = 'status-badge status-' + status;
+      statusEl.textContent = status;
+    }
+
+    async function refreshStatus() {
+      const statusRes = await fetch('/status');
+      const status = await statusRes.json();
+      renderStatusClass(status.status || 'idle');
+      document.getElementById('job_type').textContent = status.job_type || '-';
+      document.getElementById('started_at').textContent = status.started_at || '-';
+      document.getElementById('finished_at').textContent = status.finished_at || '-';
+      document.getElementById('last_error').textContent = status.last_error || '-';
+      document.getElementById('last_result').textContent = JSON.stringify(status.last_result || {}, null, 2);
+      if (status.job_type === 'sweep' && status.sweep_total) {
+        document.getElementById('sweep_progress').textContent = status.sweep_completed + '/' + status.sweep_total;
+      } else if (status.last_result && status.last_result.best_val_loss !== undefined) {
+        document.getElementById('sweep_progress').textContent = 'best_val_loss: ' + status.last_result.best_val_loss;
+      } else {
+        document.getElementById('sweep_progress').textContent = '-';
+      }
+    }
+
+    async function refreshLogs() {
+      const logsRes = await fetch('/logs');
+      const payload = await logsRes.json();
+      document.getElementById('logs').textContent = (payload.logs || []).join('\n') || 'No logs yet.';
+    }
+
+    function renderRunItems(runs) {
+      runsListEl.innerHTML = '';
+      if (!runs.length) {
+        runsListEl.innerHTML = '<div class="run-meta">No runs yet.</div>';
+        return;
+      }
+      for (const run of runs) {
+        const el = document.createElement('div');
+        el.className = 'run-item' + (selectedRunId === run.id ? ' active' : '');
+        el.dataset.runId = run.id;
+        const kind = run.kind === 'sweep_trial' ? 'sweep trial' : 'single run';
+        el.innerHTML =
+          '<div class="run-id">' + run.id + '</div>' +
+          '<div class="run-meta">' + kind + ' • best_val_loss: ' + (run.best_val_loss ?? '-') + '</div>';
+        el.addEventListener('click', () => selectRun(run.id));
+        runsListEl.appendChild(el);
+      }
+    }
+
+    async function refreshRuns() {
+      const res = await fetch('/runs');
+      const payload = await res.json();
+      const runs = payload.runs || [];
+      const bestRun = payload.best_run || null;
+      renderRunItems(runs);
+      if (bestRun) {
+        bestRunIdEl.textContent = bestRun.id;
+        bestRunLossEl.textContent = 'best_val_loss: ' + bestRun.best_val_loss;
+        bestRunLinksEl.innerHTML = '<a href="#" id="open_best_run">Open best run</a>';
+        const openLink = document.getElementById('open_best_run');
+        if (openLink) {
+          openLink.addEventListener('click', (event) => {
+            event.preventDefault();
+            selectRun(bestRun.id);
+          });
+        }
+      } else {
+        bestRunIdEl.textContent = 'No eligible runs yet';
+        bestRunLossEl.textContent = 'best_val_loss: -';
+        bestRunLinksEl.innerHTML = '';
+      }
+      if (!selectedRunId && runs.length) {
+        selectRun(runs[0].id);
+      }
+    }
+
+    async function selectRun(runId) {
+      selectedRunId = runId;
+      const res = await fetch('/runs/' + encodeURIComponent(runId));
+      const payload = await res.json();
+      document.getElementById('selected_run_id').textContent = runId;
+      document.getElementById('selected_summary').textContent = JSON.stringify(payload.summary || {}, null, 2);
+
+      const links = [];
+      if (payload.summary_url) links.push('<a href="' + payload.summary_url + '" target="_blank">summary.json</a>');
+      if (payload.weights_url) links.push('<a href="' + payload.weights_url + '" target="_blank">weights.npz</a>');
+      document.getElementById('selected_links').innerHTML = links.join('');
+
+      const img = document.getElementById('selected_plot');
+      if (payload.plot_url) {
+        img.src = payload.plot_url + '?t=' + Date.now();
+        img.style.display = 'block';
+      } else {
+        img.style.display = 'none';
+      }
+
+      await refreshRuns();
+    }
+
+    async function tick() {
+      await Promise.all([refreshStatus(), refreshLogs(), refreshRuns()]);
+    }
+
+    tick();
+    setInterval(tick, 3000);
+  </script>
+</body>
+</html>
