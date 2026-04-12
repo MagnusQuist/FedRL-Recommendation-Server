@@ -41,7 +41,7 @@ from app.db.models.food_item import FoodItem
 from app.db.models.food_item_category import FoodItemCategory
 from app.db.models.substitution_group_item import SubstitutionGroupItem
 from app.db.seed_backbone import (
-    SUPPORTED_ALGORITHMS,
+    FEDERATED_ALGORITHM,
     INITIAL_VERSION,
     serialise_weights,
 )
@@ -192,7 +192,7 @@ async def _load_data() -> tuple[list[dict], dict[int, list[str]], dict[str, set[
 
 
 async def _save_backbone(weights: dict[str, np.ndarray], dry_run: bool) -> None:
-    """Persist pre-trained weights as version 1 for each algorithm."""
+    """Persist pre-trained weights as the initial federated backbone (version 1)."""
     if dry_run:
         logger.info("--no-save: skipping DB write.")
         return
@@ -200,28 +200,29 @@ async def _save_backbone(weights: dict[str, np.ndarray], dry_run: bool) -> None:
     blob = serialise_weights(weights)
 
     async with AsyncSessionLocal() as db:
-        for algorithm in SUPPORTED_ALGORITHMS:
-            # Remove existing version 1 if present
-            await db.execute(
-                delete(GlobalBackboneVersion).where(
-                    GlobalBackboneVersion.algorithm == algorithm,
-                    GlobalBackboneVersion.version == INITIAL_VERSION,
-                )
+        # Remove existing version 1 if present
+        await db.execute(
+            delete(GlobalBackboneVersion).where(
+                GlobalBackboneVersion.algorithm == FEDERATED_ALGORITHM,
+                GlobalBackboneVersion.version == INITIAL_VERSION,
             )
+        )
 
-            backbone = GlobalBackboneVersion(
-                version=INITIAL_VERSION,
-                weights_blob=blob,
-                algorithm=algorithm,
-                client_count=0,
-                total_interactions=0,
-            )
-            db.add(backbone)
-            logger.info("Saved pre-trained backbone version=%d for algorithm='%s'.", INITIAL_VERSION, algorithm)
-
+        backbone = GlobalBackboneVersion(
+            version=INITIAL_VERSION,
+            weights_blob=blob,
+            algorithm=FEDERATED_ALGORITHM,
+            client_count=0,
+            total_interactions=0,
+        )
+        db.add(backbone)
         await db.commit()
 
-    logger.info("Pre-trained backbone persisted for algorithms: %s", list(SUPPORTED_ALGORITHMS))
+    logger.info(
+        "Pre-trained backbone persisted: version=%d, algorithm='%s'.",
+        INITIAL_VERSION,
+        FEDERATED_ALGORITHM,
+    )
 
 
 def _stratified_split(

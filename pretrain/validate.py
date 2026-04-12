@@ -50,7 +50,7 @@ from app.db.models.backbone import GlobalBackboneVersion
 from app.db.models.food_item import FoodItem
 from app.db.models.food_item_category import FoodItemCategory
 from app.db.models.substitution_group_item import SubstitutionGroupItem
-from app.db.seed_backbone import INITIAL_VERSION, SUPPORTED_ALGORITHMS
+from app.db.seed_backbone import INITIAL_VERSION, FEDERATED_ALGORITHM
 from pretrain.features import (
     FEATURE_DIM,
     MAX_PAIRS_PER_GROUP,
@@ -121,7 +121,7 @@ async def _load_db_data():
         result = await db.execute(
             select(GlobalBackboneVersion)
             .where(GlobalBackboneVersion.version == INITIAL_VERSION)
-            .where(GlobalBackboneVersion.algorithm == list(SUPPORTED_ALGORITHMS)[0])
+            .where(GlobalBackboneVersion.algorithm == FEDERATED_ALGORITHM)
         )
         backbone_row = result.scalar_one_or_none()
         backbone_blob = backbone_row.weights_blob if backbone_row else None

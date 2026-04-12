@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_db
 from app.fl.aggregator import MIN_CLIENTS_PER_ROUND, ROUND_TIMEOUT_SECONDS
 from app.api.schemas.backbone import BackboneDownload, BackboneUpload, RoundStatus, UploadAck
-from app.db.seed_backbone import SUPPORTED_ALGORITHMS
+from app.db.seed_backbone import FEDERATED_ALGORITHM
 
 router = APIRouter(prefix="/backbone")
 
@@ -18,12 +18,12 @@ def get_aggregator(request: Request):
 
 
 def validate_algorithm_or_400(algorithm: str) -> str:
-    if algorithm not in SUPPORTED_ALGORITHMS:
+    if algorithm != FEDERATED_ALGORITHM:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 f"Unsupported algorithm '{algorithm}'. "
-                f"Supported algorithms: {list(SUPPORTED_ALGORITHMS)}"
+                f"Only the federated algorithm '{FEDERATED_ALGORITHM}' is supported."
             ),
         )
     return algorithm

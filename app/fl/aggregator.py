@@ -34,7 +34,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.backbone import GlobalBackboneVersion
-from app.db.seed_backbone import SUPPORTED_ALGORITHMS
+from app.db.seed_backbone import FEDERATED_ALGORITHM
 
 # ---------------------------------------------------------------------------
 # Configuration — overridable via environment variables
@@ -62,13 +62,13 @@ class QueuedUpload:
 class FLAggregator:
     def __init__(self) -> None:
         self._queues: dict[str, dict[str, QueuedUpload]] = {
-            algorithm: {} for algorithm in SUPPORTED_ALGORITHMS
+            FEDERATED_ALGORITHM: {}
         }
         self._round_starts: dict[str, Optional[float]] = {
-            algorithm: None for algorithm in SUPPORTED_ALGORITHMS
+            FEDERATED_ALGORITHM: None
         }
         self._rounds_completed: dict[str, int] = {
-            algorithm: 0 for algorithm in SUPPORTED_ALGORITHMS
+            FEDERATED_ALGORITHM: 0
         }
         self._lock = asyncio.Lock()
 
@@ -131,7 +131,7 @@ class FLAggregator:
         triggered_any = False
 
         async with self._lock:
-            for algorithm in SUPPORTED_ALGORITHMS:
+            for algorithm in (FEDERATED_ALGORITHM,):
                 queue = self._queues[algorithm]
                 round_start = self._round_starts[algorithm]
 
@@ -191,7 +191,7 @@ class FLAggregator:
         """
         per_algorithm: dict[str, Any] = {}
 
-        for algorithm in SUPPORTED_ALGORITHMS:
+        for algorithm in (FEDERATED_ALGORITHM,):
             queue = self._queues[algorithm]
             queued_uploads = list(queue.values())
             queued_client_ids = [u.client_id for u in queued_uploads]
@@ -237,10 +237,10 @@ class FLAggregator:
     # ── Internal ────────────────────────────────────────────────────────────
 
     def _validate_algorithm(self, algorithm: str) -> None:
-        if algorithm not in SUPPORTED_ALGORITHMS:
+        if algorithm != FEDERATED_ALGORITHM:
             raise ValueError(
                 f"Unsupported algorithm '{algorithm}'. "
-                f"Supported algorithms: {SUPPORTED_ALGORITHMS}"
+                f"Only the federated algorithm '{FEDERATED_ALGORITHM}' is supported."
             )
 
     def _should_trigger(self, algorithm: str) -> bool:

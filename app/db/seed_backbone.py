@@ -1,15 +1,17 @@
 """
 seed_backbone.py
 ================
-Writes an initial global backbone (version 1) to the database.
+Writes the initial federated backbone (version 1) to the database.
 
 Version 1 represents a randomly initialised backbone — it is the starting
 point that Raspberry Pi clients download before they have accumulated enough
 interactions to trigger a FedAvg round.
 
-Environment variables (.env supported):
-    SUPPORTED_BACKBONE_ALGORITHMS=ts
-    DEFAULT_BACKBONE_ALGORITHMS=ts
+The same pretrained weights are used to initialise both:
+  - the federated backbone  (stored in GlobalBackboneVersion, algorithm="ts")
+  - the centralized backbone (initialised in-process by CentralizedService)
+
+Environment variables:
     BACKBONE_INIT_SEED=42
 """
 
@@ -20,56 +22,22 @@ import gzip
 import json
 from app.logger import logger
 import os
-from typing import Iterable
 
 import numpy as np
-from dotenv import load_dotenv
 from sqlalchemy import select
 
 from app.db import AsyncSessionLocal
 from app.db.models.backbone import GlobalBackboneVersion
-
-load_dotenv()
 
 INPUT_DIM = 16
 HIDDEN_DIM = 64
 OUTPUT_DIM = 32
 INITIAL_VERSION = 1
 
-FALLBACK_SUPPORTED_ALGORITHMS = ("ts",)
-FALLBACK_DEFAULT_ALGORITHMS = ("ts",)
-FALLBACK_BASE_SEED = 42
+# The single algorithm used by the federated backbone.
+FEDERATED_ALGORITHM = "ts"
 
-
-def _parse_csv_env(value: str | None) -> list[str]:
-    if not value:
-        return []
-    return [item.strip().lower() for item in value.split(",") if item.strip()]
-
-
-def _load_algorithm_config() -> tuple[tuple[str, ...], tuple[str, ...]]:
-    supported = _parse_csv_env(os.getenv("SUPPORTED_BACKBONE_ALGORITHMS"))
-    default = _parse_csv_env(os.getenv("DEFAULT_BACKBONE_ALGORITHMS"))
-
-    if not supported:
-        supported = list(FALLBACK_SUPPORTED_ALGORITHMS)
-
-    if not default:
-        default = list(FALLBACK_DEFAULT_ALGORITHMS)
-
-    supported_set = set(supported)
-    invalid_defaults = [algo for algo in default if algo not in supported_set]
-    if invalid_defaults:
-        raise ValueError(
-            "DEFAULT_BACKBONE_ALGORITHMS contains values not present in "
-            f"SUPPORTED_BACKBONE_ALGORITHMS: {invalid_defaults}"
-        )
-
-    return tuple(supported), tuple(default)
-
-
-SUPPORTED_ALGORITHMS, DEFAULT_ALGORITHMS = _load_algorithm_config()
-BASE_SEED = int(os.getenv("BACKBONE_INIT_SEED", str(FALLBACK_BASE_SEED)))
+BASE_SEED = int(os.getenv("BACKBONE_INIT_SEED", "42"))
 
 
 def _kaiming_uniform(
@@ -94,7 +62,9 @@ def init_backbone_weights(seed: int) -> dict[str, np.ndarray]:
     """
     Create a freshly initialised backbone state dict.
 
-    Initialize the TS backbone parameter state.
+    Keys follow the pretrain/model.py convention (backbone.N.weight/bias) so
+    that both the federated and centralized arms can load them with the same
+    mapping logic.
     """
     rng = np.random.default_rng(seed)
 
@@ -112,33 +82,27 @@ def serialise_weights(weights: dict[str, np.ndarray]) -> str:
     return base64.b64encode(compressed).decode("utf-8")
 
 
-async def initial_version_exists(algorithm: str) -> bool:
-    """Return True if the initial seeded version already exists for algorithm."""
+async def _federated_backbone_exists() -> bool:
+    """Return True if the initial seeded federated backbone already exists."""
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             select(GlobalBackboneVersion)
-            .where(GlobalBackboneVersion.algorithm == algorithm)
+            .where(GlobalBackboneVersion.algorithm == FEDERATED_ALGORITHM)
             .where(GlobalBackboneVersion.version == INITIAL_VERSION)
             .limit(1)
         )
         return result.scalar_one_or_none() is not None
 
 
-async def seed_algorithm(algorithm: str, seed: int = BASE_SEED) -> None:
+async def seed_federated_backbone(seed: int = BASE_SEED) -> None:
     """
-    Seed the initial backbone (version 1) for one algorithm if it does not
-    already exist.
+    Seed the initial federated backbone (version 1) in the database if it does
+    not already exist.  Uses the same pretrained weights as the centralized arm.
     """
-    if algorithm not in SUPPORTED_ALGORITHMS:
-        raise ValueError(
-            f"Unsupported algorithm '{algorithm}'. "
-            f"Supported algorithms: {SUPPORTED_ALGORITHMS}"
-        )
-
-    if await initial_version_exists(algorithm):
+    if await _federated_backbone_exists():
         logger.info(
-            "Initial backbone for algorithm='%s' (version=%d) already exists — skipping.",
-            algorithm,
+            "Initial federated backbone (algorithm='%s', version=%d) already exists — skipping.",
+            FEDERATED_ALGORITHM,
             INITIAL_VERSION,
         )
         return
@@ -150,7 +114,7 @@ async def seed_algorithm(algorithm: str, seed: int = BASE_SEED) -> None:
         backbone = GlobalBackboneVersion(
             version=INITIAL_VERSION,
             weights_blob=blob,
-            algorithm=algorithm,
+            algorithm=FEDERATED_ALGORITHM,
             client_count=0,
             total_interactions=0,
         )
@@ -162,20 +126,10 @@ async def seed_algorithm(algorithm: str, seed: int = BASE_SEED) -> None:
         logger.info("  %s shape=%s dtype=%s", key, arr.shape, arr.dtype)
 
     logger.info(
-        "Seeded initial backbone id=%d version=%d for algorithm='%s' "
-        "(seed=%d, blob_size=%d bytes).",
+        "Seeded initial federated backbone id=%d version=%d (algorithm='%s', seed=%d, blob_size=%d bytes).",
         backbone.id,
         backbone.version,
-        algorithm,
+        FEDERATED_ALGORITHM,
         seed,
         len(blob),
     )
-
-
-async def seed_algorithms(
-    algorithms: Iterable[str],
-    base_seed: int = BASE_SEED,
-) -> None:
-    for algorithm in algorithms:
-        logger.info("Seeding backbone for algorithm='%s' ...", algorithm)
-        await seed_algorithm(algorithm, seed=base_seed)

@@ -4,7 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.logger import logger
 
-from app.db.seed_backbone import SUPPORTED_ALGORITHMS
+from app.db.seed_backbone import FEDERATED_ALGORITHM
 
 
 # ---------------------------------------------------------------------------
@@ -74,9 +74,9 @@ class BackboneUpload(BaseModel):
     @field_validator("algorithm")
     @classmethod
     def validate_algorithm(cls, v: str) -> str:
-        if v not in SUPPORTED_ALGORITHMS:
+        if v != FEDERATED_ALGORITHM:
             raise ValueError(
-                f"Unsupported algorithm '{v}'. Supported algorithms: {SUPPORTED_ALGORITHMS}"
+                f"Unsupported algorithm '{v}'. Only '{FEDERATED_ALGORITHM}' is supported."
             )
         return v
     

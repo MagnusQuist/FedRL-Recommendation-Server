@@ -279,11 +279,15 @@ class CentralizedService:
         """
         # The pretrained dict uses keys like "backbone.0.weight" which map to
         # the BackboneEncoder's `net.0.weight` etc.
+        # The pretrained checkpoint has a 2-layer architecture (16→64→32), while
+        # BackboneEncoder has 3 linear layers (16→64→64→32). The pretrained final
+        # layer (backbone.2, shape [32,64]) maps to net.4; net.2 stays randomly
+        # initialized. strict=False allows the partial load.
         mapping = {
             "backbone.0.weight": "net.0.weight",
             "backbone.0.bias":   "net.0.bias",
-            "backbone.2.weight": "net.2.weight",
-            "backbone.2.bias":   "net.2.bias",
+            "backbone.2.weight": "net.4.weight",
+            "backbone.2.bias":   "net.4.bias",
         }
         sd = {}
         for src_key, dst_key in mapping.items():
@@ -292,7 +296,7 @@ class CentralizedService:
                 sd[dst_key] = torch.tensor(arr, dtype=torch.float32)
             else:
                 sd[dst_key] = torch.tensor(np.array(arr, dtype=np.float32))
-        self.backbone.load_state_dict(sd)
+        self.backbone.load_state_dict(sd, strict=False)
         self.backbone.eval()
         self.model_version = version
         logger.info("Centralized backbone initialised from pretrained weights (version=%d).", version)

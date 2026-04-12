@@ -14,7 +14,7 @@ from app.api.schemas.centralized import (
     InteractionAck,
     InteractionUpload,
 )
-from app.db.seed_backbone import SUPPORTED_ALGORITHMS
+from app.db.seed_backbone import FEDERATED_ALGORITHM
 
 router = APIRouter(prefix="/centralized")
 
@@ -24,12 +24,12 @@ def _get_centralized_service(request: Request):
 
 
 def _validate_algorithm(algorithm: str) -> str:
-    if algorithm not in SUPPORTED_ALGORITHMS:
+    if algorithm != FEDERATED_ALGORITHM:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 f"Unsupported algorithm '{algorithm}'. "
-                f"Supported: {list(SUPPORTED_ALGORITHMS)}"
+                f"Only '{FEDERATED_ALGORITHM}' is supported."
             ),
         )
     return algorithm

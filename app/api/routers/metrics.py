@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.backbone import GlobalBackboneVersion
 from app.db import AsyncSessionLocal, get_db
-from app.db.seed_backbone import SUPPORTED_ALGORITHMS
+from app.db.seed_backbone import FEDERATED_ALGORITHM
 from app.db.seed_status import is_database_seeded
 
 
@@ -30,7 +30,7 @@ async def _collect_metrics(aggregator) -> dict:
     async with AsyncSessionLocal() as db:
         backbone_by_algorithm: dict[str, dict | None] = {}
 
-        for algorithm in SUPPORTED_ALGORITHMS:
+        for algorithm in (FEDERATED_ALGORITHM,):
             latest = await aggregator.get_current_version(db, algorithm=algorithm)  # type: ignore[arg-type]
 
             if latest is None:
