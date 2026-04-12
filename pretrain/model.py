@@ -20,7 +20,7 @@ from app.db.seed_backbone import HIDDEN_DIM, INPUT_DIM, OUTPUT_DIM
 
 
 class Backbone(nn.Module):
-    """Two-layer feature extractor shared across TS and DQN algorithms."""
+    """Two-layer feature extractor used by the TS algorithm."""
 
     def __init__(self) -> None:
         super().__init__()

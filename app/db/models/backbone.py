@@ -15,7 +15,7 @@ class GlobalBackboneVersion(Base):
     )
     algorithm: Mapped[str] = mapped_column(
         String(10), nullable=False,
-        comment="Algorithm this backbone belongs to: 'ts' or 'dqn'."
+        comment="Algorithm this backbone belongs to: 'ts'."
     )
     client_count: Mapped[int] = mapped_column(
         Integer, nullable=False,

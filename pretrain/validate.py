@@ -26,7 +26,7 @@ Runs three interpretable checks and prints a pass/fail summary:
      Random init baseline ≈ 0.0.  A useful backbone should have mean ρ ≥ 0.30.
 
 Usage:
-    python -m app.pretrain.validate [--baseline]
+    python -m pretrain.validate [--baseline]
 
     --baseline   Also evaluate a randomly initialised backbone for comparison.
 """
@@ -51,13 +51,13 @@ from app.db.models.food_item import FoodItem
 from app.db.models.food_item_category import FoodItemCategory
 from app.db.models.substitution_group_item import SubstitutionGroupItem
 from app.db.seed_backbone import INITIAL_VERSION, SUPPORTED_ALGORITHMS
-from app.pretrain.features import (
+from pretrain.features import (
     FEATURE_DIM,
     MAX_PAIRS_PER_GROUP,
     build_feature_vector,
 )
-from app.pretrain.model import BackboneWithHead
-from app.pretrain.targets import compute_nutrition_maxes
+from pretrain.model import BackboneWithHead
+from pretrain.targets import compute_nutrition_maxes
 
 logger = logging.getLogger(__name__)
 

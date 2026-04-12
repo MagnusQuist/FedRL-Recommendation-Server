@@ -21,9 +21,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import sys
 from collections import defaultdict
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -40,11 +45,24 @@ from app.db.seed_backbone import (
     INITIAL_VERSION,
     serialise_weights,
 )
-from app.pretrain.features import build_dataset
-from app.pretrain.model import BackboneWithHead
-from app.pretrain.trainer import TrainConfig, train, plot_training
+from pretrain.features import build_dataset
+from pretrain.model import BackboneWithHead
+from pretrain.trainer import TrainConfig, train, plot_training
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PretrainOptions:
+    epochs: int = 300
+    lr: float = 1e-3
+    batch_size: int = 256
+    patience: int = 20
+    seed: int = 42
+    plot: bool = False
+    save_plot: str | None = None
+    no_save: bool = False
+    output_dir: str | None = None
 
 
 def _parse_args() -> argparse.Namespace:
@@ -57,7 +75,73 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--plot", action="store_true", help="Show loss plot after training.")
     parser.add_argument("--save-plot", type=str, default=None, help="Save loss plot to file.")
     parser.add_argument("--no-save", action="store_true", help="Dry run — skip DB write.")
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Directory for training artifacts (weights/plot/summary).",
+    )
     return parser.parse_args()
+
+
+def options_from_args(args: argparse.Namespace) -> PretrainOptions:
+    return PretrainOptions(
+        epochs=args.epochs,
+        lr=args.lr,
+        batch_size=args.batch_size,
+        patience=args.patience,
+        seed=args.seed,
+        plot=args.plot,
+        save_plot=args.save_plot,
+        no_save=args.no_save,
+        output_dir=args.output_dir,
+    )
+
+
+def _prepare_artifact_paths(options: PretrainOptions) -> tuple[Path | None, Path | None]:
+    """Create output directory and default loss-plot path when configured."""
+    if not options.output_dir:
+        return None, Path(options.save_plot) if options.save_plot else None
+
+    output_dir = Path(options.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    save_plot_path = Path(options.save_plot) if options.save_plot else output_dir / "training_loss.png"
+    return output_dir, save_plot_path
+
+
+def _save_artifacts(
+    output_dir: Path | None,
+    weights: dict[str, np.ndarray],
+    result: dict[str, Any],
+    options: PretrainOptions,
+) -> dict[str, str | None]:
+    """Persist local training artifacts for run-to-run comparison."""
+    if output_dir is None:
+        return {"artifacts_dir": None, "weights_file": None, "summary_file": None}
+
+    weights_path = output_dir / "backbone_weights.npz"
+    np.savez_compressed(weights_path, **weights)
+
+    summary_path = output_dir / "summary.json"
+    summary_payload = {
+        "trained_at_utc": datetime.now(timezone.utc).isoformat(),
+        "options": {
+            "epochs": options.epochs,
+            "lr": options.lr,
+            "batch_size": options.batch_size,
+            "patience": options.patience,
+            "seed": options.seed,
+            "no_save": options.no_save,
+        },
+        "result": result,
+    }
+    summary_path.write_text(json.dumps(summary_payload, indent=2), encoding="utf-8")
+    logger.info("Saved training artifacts to %s", output_dir)
+    return {
+        "artifacts_dir": str(output_dir),
+        "weights_file": str(weights_path),
+        "summary_file": str(summary_path),
+    }
 
 
 async def _load_data() -> tuple[list[dict], dict[int, list[str]], dict[str, set[int]]]:
@@ -159,10 +243,12 @@ def _stratified_split(
     return all_indices[train_mask], all_indices[~train_mask]
 
 
-async def _run(args: argparse.Namespace) -> None:
+async def run_pretraining(options: PretrainOptions) -> dict[str, Any]:
+    output_dir, save_plot_path = _prepare_artifact_paths(options)
+
     # Reproducibility
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
+    torch.manual_seed(options.seed)
+    np.random.seed(options.seed)
 
     # Load data
     food_items, substitution_groups, item_category_map = await _load_data()
@@ -175,7 +261,7 @@ async def _run(args: argparse.Namespace) -> None:
     logger.info("Dataset: %d samples, feature_dim=%d", len(features), features.shape[1])
 
     # Stratified split
-    train_idx, val_idx = _stratified_split(group_ids, seed=args.seed)
+    train_idx, val_idx = _stratified_split(group_ids, seed=options.seed)
     logger.info("Train: %d samples, Val: %d samples", len(train_idx), len(val_idx))
 
     train_ds = TensorDataset(
@@ -187,18 +273,18 @@ async def _run(args: argparse.Namespace) -> None:
         torch.from_numpy(targets[val_idx]),
     )
 
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size)
+    train_loader = DataLoader(train_ds, batch_size=options.batch_size, shuffle=True)
+    val_loader = DataLoader(val_ds, batch_size=options.batch_size)
 
     # Train
     model = BackboneWithHead()
     config = TrainConfig(
-        lr=args.lr,
-        epochs=args.epochs,
-        patience=args.patience,
+        lr=options.lr,
+        epochs=options.epochs,
+        patience=options.patience,
     )
     logger.info("Starting pre-training: epochs=%d, lr=%s, batch_size=%d, patience=%d",
-                config.epochs, config.lr, args.batch_size, config.patience)
+                config.epochs, config.lr, options.batch_size, config.patience)
 
     history = train(model, train_loader, val_loader, config)
 
@@ -209,15 +295,33 @@ async def _run(args: argparse.Namespace) -> None:
     )
 
     # Plot
-    if args.plot or args.save_plot:
-        plot_training(history, save_path=args.save_plot)
+    if options.plot or save_plot_path:
+        plot_training(history, save_path=str(save_plot_path) if save_plot_path else None)
 
     # Save
     weights = model.get_backbone_weights_numpy()
     for key, arr in weights.items():
         logger.info("  %s  shape=%s  dtype=%s", key, arr.shape, arr.dtype)
 
-    await _save_backbone(weights, dry_run=args.no_save)
+    await _save_backbone(weights, dry_run=options.no_save)
+
+    result = {
+        "dataset_samples": int(len(features)),
+        "feature_dim": int(features.shape[1]),
+        "train_samples": int(len(train_idx)),
+        "val_samples": int(len(val_idx)),
+        "best_epoch": int(history.best_epoch),
+        "best_val_loss": float(min(history.val_loss) if history.val_loss else float("nan")),
+        "saved_to_db": not options.no_save,
+        "save_plot": str(save_plot_path) if save_plot_path else None,
+    }
+    result.update(_save_artifacts(output_dir, weights, result, options))
+    return result
+
+
+async def _run(args: argparse.Namespace) -> None:
+    options = options_from_args(args)
+    await run_pretraining(options)
 
 
 def main() -> None:

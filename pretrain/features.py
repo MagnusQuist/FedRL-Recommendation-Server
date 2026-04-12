@@ -30,7 +30,7 @@ from typing import Sequence
 
 import numpy as np
 
-from app.pretrain.targets import (
+from pretrain.targets import (
     NUTRITION_FIELDS,
     compute_nutrition_maxes,
     compute_target_score,

@@ -25,7 +25,7 @@ services:
   server:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.server
       target: runtime
     container_name: fedrl_server
     restart: unless-stopped
@@ -46,21 +46,26 @@ services:
     volumes:
       - .:/app
 
-  # ── pgAdmin (optional — remove if not needed) ───────────────────────────────
-  # pgadmin:
-  #   image: dpage/pgadmin4:latest
-  #   container_name: fedrl_pgadmin
-  #   restart: unless-stopped
-  #   depends_on:
-  #     - postgres
-  #   environment:
-  #     PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@fedrl.local}
-  #     PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
-  #     PGADMIN_CONFIG_SERVER_MODE: "False"
-  #   ports:
-  #     - "5050:80"
-  #   networks:
-  #     - fedrl_network
+  # ── Pretrain UI service ─────────────────────────────────────────────────────
+  pretrain-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.pretrain
+    container_name: fedrl_pretrain_dashboard
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-fedrl}:${POSTGRES_PASSWORD:-fedrl}@postgres:5432/${POSTGRES_DB:-fedrl}
+      SQL_ECHO: ${SQL_ECHO:-false}
+    ports:
+      - "8010:8010"
+    networks:
+      - fedrl_network
+    volumes:
+      - .:/app
+      - ./pretrain/training_data:/app/pretrain/training_data
 
 volumes:
   postgres_data:

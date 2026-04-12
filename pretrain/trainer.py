@@ -175,3 +175,5 @@ def plot_training(history: TrainHistory, save_path: str | None = None) -> None:
         logger.info("Saved training plot to %s", save_path)
     else:
         plt.show()
+    # Prevent matplotlib figure accumulation during sweep runs.
+    plt.close(fig)
