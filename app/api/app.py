@@ -19,7 +19,9 @@ from fastapi.staticfiles import StaticFiles
 
 from app.db.helpers.seed_db import ensure_models_if_enabled, seed_data_if_needed
 from app.db import AsyncSessionLocal
+from app.db.seed_backbone import init_backbone_weights, BASE_SEED, INITIAL_VERSION
 from app.fl.aggregator import FLAggregator, ROUND_TIMEOUT_SECONDS
+from app.fl.centralized import CentralizedService
 from app.api.routers.api import router as api_router
 
 
@@ -50,6 +52,15 @@ async def lifespan(app: FastAPI):
 
     aggregator = FLAggregator()
     app.state.aggregator = aggregator
+
+    # Initialise the centralized training service.
+    # Try to restore persisted state first; fall back to the same pretrained
+    # seed weights used by the federated arm for experimental fairness.
+    centralized_service = CentralizedService()
+    if not centralized_service.try_load_persisted_state():
+        pretrained_weights = init_backbone_weights(seed=BASE_SEED)
+        centralized_service.init_from_pretrained_weights(pretrained_weights, version=INITIAL_VERSION)
+    app.state.centralized_service = centralized_service
 
     watcher = asyncio.create_task(_timeout_watcher(aggregator))
 
