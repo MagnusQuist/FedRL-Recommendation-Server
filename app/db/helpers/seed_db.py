@@ -1,6 +1,6 @@
 import os
 
-from app.db.db_init import ensure_models, ensure_seed_backbones, ensure_seed_catalogue
+from app.db.db_init import ensure_models, ensure_seed_catalogue
 from app.logger import logger
 
 from app.db.seed_status import is_database_seeded
@@ -20,16 +20,17 @@ async def ensure_models_if_enabled() -> None:
 
 
 async def seed_data_if_needed() -> None:
-    """Backbone + catalogue seed when the DB has no categories yet (can be slow)."""
+    """Catalogue seed when the DB has no categories yet (can be slow).
+
+    Backbone seeding is intentionally excluded here — it runs synchronously
+    in the app lifespan before the CentralizedService is initialised.
+    """
     if await is_database_seeded():
-        logger.info("Existing data detected; skipping seed data population.")
+        logger.info("Existing data detected; skipping catalogue seed.")
         return
 
-    await ensure_seed_backbones()
-    logger.info("Backbone seeding done")
-
     await ensure_seed_catalogue()
-    logger.info("Catalogue seeding done")
+    logger.info("Catalogue seeding done.")
 
 
 async def seed_db() -> None:

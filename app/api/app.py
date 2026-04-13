@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.db.helpers.seed_db import ensure_models_if_enabled, seed_data_if_needed
 from app.db import AsyncSessionLocal
-from app.db.seed_backbone import init_backbone_weights, BASE_SEED, INITIAL_VERSION
+from app.db.db_init import ensure_seed_backbones
 from app.fl.aggregator import FLAggregator, ROUND_TIMEOUT_SECONDS
 from app.fl.centralized import CentralizedService
 from app.api.routers.api import router as api_router
@@ -41,7 +41,14 @@ async def _timeout_watcher(aggregator: FLAggregator) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Model creation (create_all) runs before serving; heavy catalogue seed runs in the background."""
+    """
+    Startup sequence:
+      1. Create missing DB tables (if AUTO_CREATE_MODELS=true).
+      2. Seed both backbone models synchronously from pretrained weights —
+         this must complete before CentralizedService loads from the DB.
+      3. Initialise in-memory services (aggregator, centralized service).
+      4. Start background tasks (timeout watcher, catalogue seed).
+    """
     logger.info("Starting DB init...")
     try:
         await ensure_models_if_enabled()
@@ -50,16 +57,17 @@ async def lifespan(app: FastAPI):
         logger.exception("Startup failed during model creation.")
         raise
 
+    # Seed both backbone models from pretrained weights before any service
+    # tries to read from the DB.  Each function is idempotent — it skips if
+    # the row already exists.
+    await ensure_seed_backbones()
+
     aggregator = FLAggregator()
     app.state.aggregator = aggregator
 
-    # Initialise the centralized training service.
-    # Try to restore persisted state first; fall back to the same pretrained
-    # seed weights used by the federated arm for experimental fairness.
+    # CentralizedService always finds its initial state in the DB at this point.
     centralized_service = CentralizedService()
-    if not centralized_service.try_load_persisted_state():
-        pretrained_weights = init_backbone_weights(seed=BASE_SEED)
-        centralized_service.init_from_pretrained_weights(pretrained_weights, version=INITIAL_VERSION)
+    await centralized_service.try_load_persisted_state()
     app.state.centralized_service = centralized_service
 
     watcher = asyncio.create_task(_timeout_watcher(aggregator))
@@ -69,17 +77,17 @@ async def lifespan(app: FastAPI):
         async def _background_seed() -> None:
             try:
                 await seed_data_if_needed()
-                logger.info("Background catalogue/backbone seed finished.")
+                logger.info("Background catalogue seed finished.")
             except Exception:
                 logger.exception(
-                    "Background seed failed — ensure models (AUTO_CREATE_MODELS=true) and "
+                    "Background catalogue seed failed — run "
                     "`python -m app.db.seed_catalogue` if the catalogue is empty."
                 )
 
         asyncio.create_task(_background_seed())
-        logger.info("Catalogue/backbone seed scheduled in background (server is starting).")
+        logger.info("Catalogue seed scheduled in background (server is starting).")
     else:
-        logger.info("AUTO_SEED_DATA_ON_STARTUP=false — skipping automatic data seed.")
+        logger.info("AUTO_SEED_DATA_ON_STARTUP=false — skipping automatic catalogue seed.")
 
     yield
 

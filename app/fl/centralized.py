@@ -6,7 +6,7 @@ Manages a centralized backbone + global heads for the centralized experiment arm
 - Receives raw interaction tuples from centralized-mode clients.
 - Retrains the backbone on the accumulated tuple pool.
 - Applies Bayesian online updates to global shared heads (item, price, nudge).
-- Persists all state to disk so the server can restart without loss.
+- Persists all state to the database so the server can restart without loss.
 """
 
 from __future__ import annotations
@@ -15,27 +15,27 @@ import asyncio
 import base64
 import gzip
 import json
-import os
 import random
 from collections import OrderedDict
-from pathlib import Path
 from typing import Any
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from sqlalchemy import select
 
+from app.db import AsyncSessionLocal
+from app.db.models.centralized import CentralizedModelVersion
 from app.logger import logger
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-DATA_DIR = Path(os.getenv("CENTRALIZED_DATA_DIR", "data/centralized"))
-MAX_TUPLE_POOL_SIZE = int(os.getenv("CENTRALIZED_MAX_TUPLES", "2000"))
 RETRAIN_LR = 1e-3
 RETRAIN_EPOCHS = 3
 RETRAIN_BATCH_SIZE = 32
+MAX_TUPLE_POOL_SIZE = 2000
 CTX_PRICE_DELTA = 2  # index 2 in the 16-dim context vector
 
 NUDGE_TYPES = ["N1", "N2", "N3", "N4"]
@@ -47,19 +47,18 @@ NUDGE_TYPES = ["N1", "N2", "N3", "N4"]
 class BackboneEncoder(nn.Module):
     def __init__(self, input_dim: int = 16, latent_dim: int = 32):
         super().__init__()
-        self.net = nn.Sequential(
+        self.backbone = nn.Sequential(
             nn.Linear(input_dim, 64), nn.ReLU(),
-            nn.Linear(64, 64),        nn.ReLU(),
-            nn.Linear(64, latent_dim),
+            nn.Linear(64, latent_dim), nn.Tanh(),
         )
 
     def forward(self, x):
-        return self.net(x)
+        return self.backbone(x)
 
     def embed(self, context: list[float]) -> torch.Tensor:
         x = torch.tensor(context, dtype=torch.float32).unsqueeze(0)
         with torch.no_grad():
-            return self.net(x).squeeze(0)
+            return self.backbone(x).squeeze(0)
 
 
 class RewardPredictor(nn.Module):
@@ -167,8 +166,14 @@ class TSNudgeHead:
 # ---------------------------------------------------------------------------
 # Encoding / decoding helpers
 # ---------------------------------------------------------------------------
-def encode_state_dict(state: dict) -> str:
-    return base64.b64encode(gzip.compress(json.dumps(state).encode())).decode()
+def _encode(obj: dict) -> str:
+    """Serialize a dict to a gzip-compressed, base64-encoded JSON string."""
+    return base64.b64encode(gzip.compress(json.dumps(obj).encode())).decode()
+
+
+def _decode(blob: str) -> dict:
+    """Deserialize a blob produced by _encode."""
+    return json.loads(gzip.decompress(base64.b64decode(blob)).decode())
 
 
 def decode_tuples(data: str) -> list[dict]:
@@ -176,14 +181,8 @@ def decode_tuples(data: str) -> list[dict]:
 
 
 def _backbone_to_serialisable(backbone: BackboneEncoder) -> dict:
-    """Convert backbone state_dict to JSON-serialisable form {layer_name: tensor.tolist()}."""
+    """Convert backbone state_dict to JSON-serialisable form."""
     return {k: v.tolist() for k, v in backbone.state_dict().items()}
-
-
-def _load_backbone_from_dict(backbone: BackboneEncoder, d: dict):
-    """Load backbone weights from a JSON-deserialised dict {layer_name: list}."""
-    sd = {k: torch.tensor(v, dtype=torch.float32) for k, v in d.items()}
-    backbone.load_state_dict(sd)
 
 
 # ---------------------------------------------------------------------------
@@ -245,11 +244,11 @@ def apply_tuple_to_heads(backbone: BackboneEncoder, item_head: TSItemHead,
 class CentralizedService:
     """
     Manages the centralized backbone, reward predictor, global heads,
-    tuple pool, and model versioning.
+    tuple pool, and model versioning.  All state is persisted to the
+    centralized_model_versions database table.
     """
 
-    def __init__(self, data_dir: Path = DATA_DIR):
-        self.data_dir = data_dir
+    def __init__(self):
         self._lock = asyncio.Lock()
 
         # Models
@@ -274,77 +273,59 @@ class CentralizedService:
     def init_from_pretrained_weights(self, weights: dict[str, np.ndarray], version: int = 0):
         """
         Load backbone weights from the same pretrained checkpoint used by the
-        federated arm.  `weights` is the dict returned by
-        `seed_backbone.init_backbone_weights()`.
+        federated arm.  `weights` is a dict of numpy arrays keyed by
+        backbone parameter name (e.g. ``backbone.0.weight``).
         """
-        # The pretrained dict uses keys like "backbone.0.weight" which map to
-        # the BackboneEncoder's `net.0.weight` etc.
-        # The pretrained checkpoint has a 2-layer architecture (16→64→32), while
-        # BackboneEncoder has 3 linear layers (16→64→64→32). The pretrained final
-        # layer (backbone.2, shape [32,64]) maps to net.4; net.2 stays randomly
-        # initialized. strict=False allows the partial load.
-        mapping = {
-            "backbone.0.weight": "net.0.weight",
-            "backbone.0.bias":   "net.0.bias",
-            "backbone.2.weight": "net.4.weight",
-            "backbone.2.bias":   "net.4.bias",
+        sd = {
+            k: torch.tensor(v if isinstance(v, np.ndarray) else np.array(v, dtype=np.float32),
+                            dtype=torch.float32)
+            for k, v in weights.items()
         }
-        sd = {}
-        for src_key, dst_key in mapping.items():
-            arr = weights[src_key]
-            if isinstance(arr, np.ndarray):
-                sd[dst_key] = torch.tensor(arr, dtype=torch.float32)
-            else:
-                sd[dst_key] = torch.tensor(np.array(arr, dtype=np.float32))
-        self.backbone.load_state_dict(sd, strict=False)
+        self.backbone.load_state_dict(sd)
         self.backbone.eval()
         self.model_version = version
         logger.info("Centralized backbone initialised from pretrained weights (version=%d).", version)
 
-    def try_load_persisted_state(self) -> bool:
+    async def try_load_persisted_state(self) -> bool:
         """
-        Attempt to restore state from disk.  Returns True if state was loaded.
+        Attempt to restore state from the database.
+        Returns True if a persisted state was found and loaded.
         """
-        backbone_path = self.data_dir / "backbone_centralized.pt"
-        heads_path = self.data_dir / "heads_centralized.json"
-        tuples_path = self.data_dir / "tuple_pool.json"
-        meta_path = self.data_dir / "meta.json"
-
-        if not backbone_path.exists() or not heads_path.exists() or not meta_path.exists():
-            return False
-
         try:
-            # Load meta
-            with open(meta_path, "r") as f:
-                meta = json.load(f)
-            self.model_version = meta["model_version"]
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(CentralizedModelVersion)
+                    .order_by(CentralizedModelVersion.version.desc())
+                    .limit(1)
+                )
+                row = result.scalar_one_or_none()
 
-            # Load backbone
-            sd = torch.load(backbone_path, map_location="cpu", weights_only=True)
+            if row is None:
+                return False
+
+            # Backbone
+            backbone_data = _decode(row.backbone_blob)
+            sd = {k: torch.tensor(v, dtype=torch.float32) for k, v in backbone_data.items()}
             self.backbone.load_state_dict(sd)
             self.backbone.eval()
 
-            # Load reward predictor if saved
-            rp_path = self.data_dir / "reward_predictor_centralized.pt"
-            if rp_path.exists():
-                rp_sd = torch.load(rp_path, map_location="cpu", weights_only=True)
-                self.reward_predictor.load_state_dict(rp_sd)
-                self.reward_predictor.eval()
+            # Reward predictor
+            rp_data = _decode(row.reward_predictor_blob)
+            rp_sd = {k: torch.tensor(v, dtype=torch.float32) for k, v in rp_data.items()}
+            self.reward_predictor.load_state_dict(rp_sd)
+            self.reward_predictor.eval()
 
-            # Load heads
-            with open(heads_path, "r") as f:
-                heads_data = json.load(f)
-            self.item_head.load_state_dict(heads_data["item"])
-            self.price_head.load_state_dict(heads_data["price"])
-            self.nudge_head.load_state_dict(heads_data["nudge"])
+            # Heads
+            self.item_head.load_state_dict(_decode(row.item_head_blob))
+            self.price_head.load_state_dict(_decode(row.price_head_blob))
+            self.nudge_head.load_state_dict(_decode(row.nudge_head_blob))
 
-            # Load tuple pool
-            if tuples_path.exists():
-                with open(tuples_path, "r") as f:
-                    self._tuple_pool = json.load(f)
+            # Tuple pool
+            self._tuple_pool = _decode(row.tuple_pool_blob)
 
+            self.model_version = row.version
             logger.info(
-                "Centralized state restored from disk: version=%d, tuples=%d",
+                "Centralized state restored from DB: version=%d, tuples=%d",
                 self.model_version, len(self._tuple_pool),
             )
             return True
@@ -353,31 +334,27 @@ class CentralizedService:
             logger.exception("Failed to load persisted centralized state — will re-initialise.")
             return False
 
-    def _persist_to_disk(self):
-        """Save all centralized state to disk (called after each update)."""
-        self.data_dir.mkdir(parents=True, exist_ok=True)
+    async def _persist_to_db(self):
+        """Insert a new CentralizedModelVersion row capturing the full current state."""
+        backbone_blob = _encode(_backbone_to_serialisable(self.backbone))
+        rp_blob = _encode({k: v.tolist() for k, v in self.reward_predictor.state_dict().items()})
+        item_blob = _encode(self.item_head.state_dict())
+        price_blob = _encode(self.price_head.state_dict())
+        nudge_blob = _encode(self.nudge_head.state_dict())
+        pool_blob = _encode(self._tuple_pool)
 
-        # Backbone
-        torch.save(self.backbone.state_dict(), self.data_dir / "backbone_centralized.pt")
-        # Reward predictor
-        torch.save(self.reward_predictor.state_dict(), self.data_dir / "reward_predictor_centralized.pt")
-
-        # Heads
-        heads_data = {
-            "item": self.item_head.state_dict(),
-            "price": self.price_head.state_dict(),
-            "nudge": self.nudge_head.state_dict(),
-        }
-        with open(self.data_dir / "heads_centralized.json", "w") as f:
-            json.dump(heads_data, f)
-
-        # Tuple pool
-        with open(self.data_dir / "tuple_pool.json", "w") as f:
-            json.dump(self._tuple_pool, f)
-
-        # Meta
-        with open(self.data_dir / "meta.json", "w") as f:
-            json.dump({"model_version": self.model_version}, f)
+        async with AsyncSessionLocal() as db:
+            row = CentralizedModelVersion(
+                version=self.model_version,
+                backbone_blob=backbone_blob,
+                reward_predictor_blob=rp_blob,
+                item_head_blob=item_blob,
+                price_head_blob=price_blob,
+                nudge_head_blob=nudge_blob,
+                tuple_pool_blob=pool_blob,
+            )
+            db.add(row)
+            await db.commit()
 
     # ── Core processing ────────────────────────────────────────────────────
 
@@ -385,7 +362,7 @@ class CentralizedService:
                                    count: int, data: str) -> int:
         """
         Decode a batch of interaction tuples, retrain the backbone, update
-        global heads, bump model_version, and persist.
+        global heads, bump model_version, and persist to the database.
 
         Returns the new model_version.
         """
@@ -414,8 +391,8 @@ class CentralizedService:
             # Bump version
             self.model_version += 1
 
-            # Persist
-            self._persist_to_disk()
+            # Persist to DB
+            await self._persist_to_db()
             logger.info("Centralized model updated to version=%d", self.model_version)
 
             return self.model_version
@@ -429,10 +406,10 @@ class CentralizedService:
         backbone_dict = _backbone_to_serialisable(self.backbone)
         return {
             "model_version": self.model_version,
-            "backbone_weights": encode_state_dict(backbone_dict),
+            "backbone_weights": _encode(backbone_dict),
             "head_weights": {
-                "item": encode_state_dict(self.item_head.state_dict()),
-                "price": encode_state_dict(self.price_head.state_dict()),
-                "nudge": encode_state_dict(self.nudge_head.state_dict()),
+                "item": _encode(self.item_head.state_dict()),
+                "price": _encode(self.price_head.state_dict()),
+                "nudge": _encode(self.nudge_head.state_dict()),
             },
         }

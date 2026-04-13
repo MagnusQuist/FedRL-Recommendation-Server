@@ -4,10 +4,11 @@ model.py
 PyTorch modules for pre-training the backbone.
 
 The Backbone architecture matches the production weight key convention:
-    backbone.0.weight  (HIDDEN_DIM, INPUT_DIM)
+    backbone.0.weight  (HIDDEN_DIM, INPUT_DIM)   — Linear
     backbone.0.bias    (HIDDEN_DIM,)
-    backbone.2.weight  (OUTPUT_DIM, HIDDEN_DIM)
+    backbone.2.weight  (OUTPUT_DIM, HIDDEN_DIM)  — Linear
     backbone.2.bias    (OUTPUT_DIM,)
+    (backbone.1 = ReLU, backbone.3 = Tanh — no parameters)
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ class Backbone(nn.Module):
             nn.Linear(INPUT_DIM, HIDDEN_DIM),
             nn.ReLU(),
             nn.Linear(HIDDEN_DIM, OUTPUT_DIM),
+            nn.Tanh(),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

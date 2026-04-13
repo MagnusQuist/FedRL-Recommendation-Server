@@ -256,12 +256,9 @@ State is fully restored from disk on server restart — no training progress is 
 | `POSTGRES_DB` | `fedrl` | Database name |
 | `AUTO_CREATE_MODELS` | `false` | Run `create_all` on startup |
 | `AUTO_SEED_DATA_ON_STARTUP` | `true` | Seed catalogue + backbone in background |
-| `SUPPORTED_BACKBONE_ALGORITHMS` | `ts` | Comma-separated list of supported algorithms |
 | `BACKBONE_INIT_SEED` | `42` | Random seed for pretrained backbone initialisation (shared by both federated and centralized) |
 | `FL_MIN_CLIENTS_PER_ROUND` | `2` | Minimum uploads to trigger FedAvg |
 | `FL_ROUND_TIMEOUT_SECONDS` | `60` | FedAvg timeout (seconds) |
-| `CENTRALIZED_MAX_TUPLES` | `2000` | Max tuples retained in the centralized training pool |
-| `CENTRALIZED_DATA_DIR` | `data/centralized` | Directory for centralized model persistence |
 
 ---
 

@@ -1,7 +1,7 @@
 from app.logger import logger
 
 from app.db import Base, engine
-from app.db.seed_backbone import seed_federated_backbone
+from app.db.seed_backbone import seed_federated_backbone, seed_centralized_backbone
 from app.db.seed_catalogue import seed_catalogue
 
 
@@ -20,8 +20,9 @@ async def ensure_models() -> None:
 
 
 async def ensure_seed_backbones() -> None:
-    """Ensure the initial federated backbone (version 1) exists in the database."""
+    """Seed the initial backbone (version 1) for both federated and centralized arms."""
     await seed_federated_backbone()
+    await seed_centralized_backbone()
 
 
 async def ensure_seed_catalogue() -> None:
