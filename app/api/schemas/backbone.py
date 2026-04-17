@@ -92,7 +92,7 @@ class BackboneUpload(BaseModel):
         """Validate that backbone_weights decodes to a valid backbone parameter dict."""
         if isinstance(v, str):
             try:
-                from app.fl.aggregator import decode_backbone_blob as _decode
+                from app.backbones.aggregator import decode_backbone_blob as _decode
 
                 decoded = _decode(v)
             except Exception as e:

@@ -5,7 +5,7 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
-from app.fl.aggregator import MIN_CLIENTS_PER_ROUND, ROUND_TIMEOUT_SECONDS
+from app.backbones.aggregator import MIN_CLIENTS_PER_ROUND, ROUND_TIMEOUT_SECONDS
 from app.api.schemas.backbone import BackboneDownload, BackboneUpload, RoundStatus, UploadAck
 from app.db.seed_backbone import FEDERATED_ALGORITHM
 
@@ -130,7 +130,6 @@ async def upload_backbone(
     aggregator=Depends(get_aggregator),
 ):
     """Accept a backbone weight upload from a Raspberry Pi client."""
-    logger.info("hellol")
     logger.info(
         "Received upload from client_id='%s' backbone_version=%d n_k=%d algorithm=%s",
         payload.client_id,
@@ -159,7 +158,7 @@ async def upload_backbone(
     # before passing on to the aggregator.
     weights_dict = payload.backbone_weights
     if isinstance(weights_dict, str):
-        from app.fl.aggregator import decode_backbone_blob
+        from app.backbones.aggregator import decode_backbone_blob
         weights_dict = decode_backbone_blob(weights_dict)
 
     round_triggered, queued = await aggregator.enqueue(

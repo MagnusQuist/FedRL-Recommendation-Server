@@ -17,11 +17,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.db.helpers.seed_db import ensure_models_if_enabled, seed_data_if_needed
+from app.db.db_init import ensure_models
 from app.db import AsyncSessionLocal
-from app.db.db_init import ensure_seed_backbones
-from app.fl.aggregator import FLAggregator, ROUND_TIMEOUT_SECONDS
-from app.fl.centralized import CentralizedService
+from app.backbones.aggregator import FLAggregator, ROUND_TIMEOUT_SECONDS
+from app.backbones.centralized import CentralizedService
 from app.api.routers.api import router as api_router
 
 
@@ -44,50 +43,29 @@ async def lifespan(app: FastAPI):
     """
     Startup sequence:
       1. Create missing DB tables (if AUTO_CREATE_MODELS=true).
-      2. Seed both backbone models synchronously from pretrained weights —
-         this must complete before CentralizedService loads from the DB.
-      3. Initialise in-memory services (aggregator, centralized service).
-      4. Start background tasks (timeout watcher, catalogue seed).
+      2. Load persisted state for FL services.
+      3. Start the FL timeout watcher.
+
+    Database seeding (backbones + catalogue) is handled by standalone scripts
+    in scripts/ and should be run before the first deployment.
     """
     logger.info("Starting DB init...")
     try:
-        await ensure_models_if_enabled()
-        logger.info("Model creation phase finished.")
+        await ensure_models(check_env=True)
     except Exception:
         logger.exception("Startup failed during model creation.")
         raise
 
-    # Seed both backbone models from pretrained weights before any service
-    # tries to read from the DB.  Each function is idempotent — it skips if
-    # the row already exists.
-    await ensure_seed_backbones()
-
     aggregator = FLAggregator()
     app.state.aggregator = aggregator
 
-    # CentralizedService always finds its initial state in the DB at this point.
     centralized_service = CentralizedService()
     await centralized_service.try_load_persisted_state()
     app.state.centralized_service = centralized_service
 
     watcher = asyncio.create_task(_timeout_watcher(aggregator))
 
-    if os.getenv("AUTO_SEED_DATA_ON_STARTUP", "true").strip().lower() == "true":
-
-        async def _background_seed() -> None:
-            try:
-                await seed_data_if_needed()
-                logger.info("Background catalogue seed finished.")
-            except Exception:
-                logger.exception(
-                    "Background catalogue seed failed — run "
-                    "`python -m app.db.seed_catalogue` if the catalogue is empty."
-                )
-
-        asyncio.create_task(_background_seed())
-        logger.info("Catalogue seed scheduled in background (server is starting).")
-    else:
-        logger.info("AUTO_SEED_DATA_ON_STARTUP=false — skipping automatic catalogue seed.")
+    logger.info("Server ready.")
 
     yield
 
@@ -110,9 +88,10 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    allowed_origins = os.getenv("CORS_ALLOW_ORIGINS", "*").split(",")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # Restrict in production
+        allow_origins=allowed_origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )

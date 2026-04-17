@@ -1,0 +1,40 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  PRODUCTION                                                                ║
+# ║                                                                            ║
+# ║  Pulls the pre-built image from GHCR and connects to Amazon RDS.           ║
+# ║  No local Postgres, no bind mounts, no build step.                         ║
+# ║                                                                            ║
+# ║  Required env vars (set in .env or export before running):                 ║
+# ║    DATABASE_URL   — RDS async connection string                            ║
+# ║    SERVER_IMAGE   — (optional) override the GHCR image tag                 ║
+# ║                                                                            ║
+# ║  Usage:                                                                    ║
+# ║    docker compose -f docker-compose.prod.yml up -d                         ║
+# ║                                                                            ║
+# ║  First-time seed (run once against the RDS database):                      ║
+# ║    docker compose -f docker-compose.prod.yml run --rm server \             ║
+# ║        python scripts/seed_all.py                                          ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+services:
+
+  # ── FastAPI server ──────────────────────────────────────────────────────────
+  server:
+    image: ${SERVER_IMAGE:-ghcr.io/OWNER/fedrl-recommendation-server:latest}
+    container_name: fedrl_server
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL to the RDS connection string}
+      CATALOGUE_VERSION: ${CATALOGUE_VERSION:-2026-01-01T00:00:00Z}
+      SQL_ECHO: "false"
+      AUTO_CREATE_MODELS: "false"
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-*}
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-2}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

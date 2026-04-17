@@ -1,3 +1,7 @@
+import os
+
+from sqlalchemy.exc import IntegrityError
+
 from app.logger import logger
 
 from app.db import Base, engine
@@ -5,17 +9,25 @@ from app.db.seed_backbone import seed_federated_backbone, seed_centralized_backb
 from app.db.seed_catalogue import seed_catalogue
 
 
-async def ensure_models() -> None:
+async def ensure_models(*, check_env: bool = False) -> None:
     """Create any missing tables from database models.
 
-    Does not alter or drop existing tables/columns. If you change the database model
-    shape on a non-empty database, use manual SQL or reset the database.
+    When *check_env* is True the function is a no-op unless AUTO_CREATE_MODELS=true.
+    Safe to call from multiple Uvicorn workers concurrently.
     """
-    import app.db.models  # Register database models on Base.metadata
+    if check_env and os.getenv("AUTO_CREATE_MODELS", "false").strip().lower() != "true":
+        logger.info("Skipping create_all (AUTO_CREATE_MODELS=false).")
+        return
+
+    import app.db.models  # noqa: F401 — register models on Base.metadata
 
     logger.info("Ensuring database models (create_all for missing tables)...")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+    except IntegrityError:
+        logger.info("Tables already created by another worker — skipping.")
+        return
     logger.info("Model creation complete.")
 
 
