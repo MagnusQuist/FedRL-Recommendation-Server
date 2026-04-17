@@ -8,7 +8,6 @@ Call `create_app()` to get a fully-configured `FastAPI` instance, or import
 
 from app.logger import logger
 
-import asyncio
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -17,45 +16,18 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.db.db_init import ensure_models
-from app.db import AsyncSessionLocal
-from app.backbones.aggregator import FLAggregator, ROUND_TIMEOUT_SECONDS
+from app.backbones.aggregator import FLAggregator
 from app.backbones.centralized import CentralizedService
 from app.api.routers.api import router as api_router
-
-
-async def _timeout_watcher(aggregator: FLAggregator) -> None:
-    """Background task that periodically checks for round timeouts."""
-    logger.info("FL timeout watcher started (checking every 10s, timeout=%ds).", ROUND_TIMEOUT_SECONDS)
-    while True:
-        await asyncio.sleep(10)
-        try:
-            async with AsyncSessionLocal() as db:
-                triggered = await aggregator.check_timeout(db)
-                if triggered:
-                    logger.info("Timeout watcher triggered a FedAvg round.")
-        except Exception:
-            logger.exception("Error in FL timeout watcher.")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Startup sequence:
-      1. Create missing DB tables (if AUTO_CREATE_MODELS=true).
-      2. Load persisted state for FL services.
-      3. Start the FL timeout watcher.
-
-    Database seeding (backbones + catalogue) is handled by standalone scripts
-    in scripts/ and should be run before the first deployment.
+      1. Initialise the FL aggregator singleton.
+      2. Load persisted state for the centralized service.
     """
-    logger.info("Starting DB init...")
-    try:
-        await ensure_models(check_env=True)
-    except Exception:
-        logger.exception("Startup failed during model creation.")
-        raise
-
     aggregator = FLAggregator()
     app.state.aggregator = aggregator
 
@@ -63,17 +35,9 @@ async def lifespan(app: FastAPI):
     await centralized_service.try_load_persisted_state()
     app.state.centralized_service = centralized_service
 
-    watcher = asyncio.create_task(_timeout_watcher(aggregator))
-
     logger.info("Server ready.")
 
     yield
-
-    watcher.cancel()
-    try:
-        await watcher
-    except asyncio.CancelledError:
-        pass
 
 
 def create_app() -> FastAPI:

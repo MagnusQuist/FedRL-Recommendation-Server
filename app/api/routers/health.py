@@ -3,7 +3,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
-from app.db.seed_status import is_database_seeded
+from app.db.seeding.seed_status import is_database_seeded
 
 router = APIRouter()
 

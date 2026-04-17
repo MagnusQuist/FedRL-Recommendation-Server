@@ -7,9 +7,11 @@
 # ║  Usage:                                                                    ║
 # ║    docker compose -f docker-compose.dev.yml up                             ║
 # ║                                                                            ║
-# ║  First-time seed (after containers are running):                           ║
-# ║    docker compose -f docker-compose.dev.yml exec server \                  ║
-# ║        python scripts/seed_all.py                                          ║
+# ║  A one-shot `seed` service bootstraps the database before the server      ║
+# ║  starts (creates schema + seeds backbones + catalogue when empty).        ║
+# ║  To force re-seed against the running stack:                              ║
+# ║    docker compose -f docker-compose.dev.yml run --rm seed \                ║
+# ║        python -m app.db.seeding --force                                    ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
 services:
@@ -35,6 +37,25 @@ services:
     networks:
       - fedrl_network
 
+  # ── One-shot DB bootstrap ───────────────────────────────────────────────────
+  seed:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+      target: runtime
+    container_name: fedrl_seed
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-fedrl}:${POSTGRES_PASSWORD:-fedrl}@postgres:5432/${POSTGRES_DB:-fedrl}
+    command: ["python", "-m", "app.db.seeding"]
+    restart: "no"
+    networks:
+      - fedrl_network
+    volumes:
+      - .:/app
+
   # ── FastAPI server ──────────────────────────────────────────────────────────
   server:
     build:
@@ -46,12 +67,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      seed:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-fedrl}:${POSTGRES_PASSWORD:-fedrl}@postgres:5432/${POSTGRES_DB:-fedrl}
-      CATALOGUE_VERSION: ${CATALOGUE_VERSION:-2026-01-01T00:00:00Z}
       SQL_ECHO: ${SQL_ECHO:-false}
-      AUTO_CREATE_MODELS: "true"
       UVICORN_WORKERS: ${UVICORN_WORKERS:-1}
+      FEDERATED_CLIENTS_PER_ROUND: ${FEDERATED_CLIENTS_PER_ROUND:-2}
+      CENTRALIZED_CLIENTS_PER_ROUND: ${CENTRALIZED_CLIENTS_PER_ROUND:-2}
     ports:
       - "8000:8000"
     networks:

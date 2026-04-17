@@ -11,25 +11,39 @@
 # ║  Usage:                                                                    ║
 # ║    docker compose -f docker-compose.prod.yml up -d                         ║
 # ║                                                                            ║
-# ║  First-time seed (run once against the RDS database):                      ║
-# ║    docker compose -f docker-compose.prod.yml run --rm server \             ║
-# ║        python scripts/seed_all.py                                          ║
+# ║  A one-shot `seed` service bootstraps the RDS database before the server   ║
+# ║  starts (creates schema + seeds backbones + catalogue when empty).         ║
+# ║  To force re-seed later:                                                   ║
+# ║    docker compose -f docker-compose.prod.yml run --rm seed \               ║
+# ║        python -m app.db.seeding --force                                    ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
 services:
+
+  # ── One-shot DB bootstrap ───────────────────────────────────────────────────
+  seed:
+    image: ${SERVER_IMAGE:-ghcr.io/OWNER/fedrl-recommendation-server:latest}
+    container_name: fedrl_seed
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL to the RDS connection string}
+    command: ["python", "-m", "app.db.seeding"]
+    restart: "no"
 
   # ── FastAPI server ──────────────────────────────────────────────────────────
   server:
     image: ${SERVER_IMAGE:-ghcr.io/OWNER/fedrl-recommendation-server:latest}
     container_name: fedrl_server
     restart: unless-stopped
+    depends_on:
+      seed:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL to the RDS connection string}
-      CATALOGUE_VERSION: ${CATALOGUE_VERSION:-2026-01-01T00:00:00Z}
       SQL_ECHO: "false"
-      AUTO_CREATE_MODELS: "false"
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-*}
-      UVICORN_WORKERS: ${UVICORN_WORKERS:-2}
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-1}
+      FEDERATED_CLIENTS_PER_ROUND: ${FEDERATED_CLIENTS_PER_ROUND:-2}
+      CENTRALIZED_CLIENTS_PER_ROUND: ${CENTRALIZED_CLIENTS_PER_ROUND:-2}
     ports:
       - "8000:8000"
     healthcheck:

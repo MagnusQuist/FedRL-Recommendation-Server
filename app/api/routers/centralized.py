@@ -4,35 +4,27 @@ POST /centralized/interactions — receive raw interaction tuples
 GET  /centralized/model        — download the latest centralized model
 """
 
-from app.logger import logger
-
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status, Depends
 from fastapi.responses import Response
 
 from app.api.schemas.centralized import (
     CentralizedModelDownload,
     InteractionAck,
     InteractionUpload,
+    CentralizedTrainingStatus,
 )
-from app.db.seed_backbone import FEDERATED_ALGORITHM
+from app.backbones.centralized import CentralizedService
+from app.logger import logger
+import os
+
+CENTRALIZED_CLIENTS_PER_ROUND = int(os.getenv("CENTRALIZED_CLIENTS_PER_ROUND", "2"))
 
 router = APIRouter(prefix="/centralized")
 
 
 def _get_centralized_service(request: Request):
+    """FastAPI dependency — retrieves the CentralizedService singleton from app state."""
     return request.app.state.centralized_service
-
-
-def _validate_algorithm(algorithm: str) -> str:
-    if algorithm != FEDERATED_ALGORITHM:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"Unsupported algorithm '{algorithm}'. "
-                f"Only '{FEDERATED_ALGORITHM}' is supported."
-            ),
-        )
-    return algorithm
 
 
 @router.post(
@@ -40,16 +32,18 @@ def _validate_algorithm(algorithm: str) -> str:
     response_model=InteractionAck,
     summary="Upload interaction tuples for centralized training",
 )
-async def upload_interactions(payload: InteractionUpload, request: Request):
-    """Receive a batch of raw interaction tuples from a centralized-mode client."""
-    _validate_algorithm(payload.algorithm)
+async def upload_interactions(
+    payload: InteractionUpload, 
+    service: CentralizedService = Depends(_get_centralized_service),
+):
+    """Receive a batch of raw interaction tuples from a centralized-mode client.
 
-    service = _get_centralized_service(request)
-
+    The upload is buffered; a training round runs only when exactly
+    ``CENTRALIZED_CLIENTS_PER_ROUND`` unique clients have uploaded.
+    """
     try:
-        new_version = await service.process_interactions(
+        model_version, round_triggered, queued_clients = await service.process_interactions(
             client_id=payload.client_id,
-            algorithm=payload.algorithm,
             count=payload.count,
             data=payload.data,
         )
@@ -60,7 +54,12 @@ async def upload_interactions(payload: InteractionUpload, request: Request):
             detail=f"Failed to process interactions: {e}",
         ) from e
 
-    return InteractionAck(accepted=True, server_model_version=new_version)
+    return InteractionAck(
+        accepted=True,
+        server_model_version=model_version,
+        round_triggered=round_triggered,
+        queued_clients=queued_clients,
+    )
 
 
 @router.get(
@@ -71,16 +70,39 @@ async def upload_interactions(payload: InteractionUpload, request: Request):
 )
 async def download_centralized_model(
     since: int = Query(0, ge=0, description="Client's current model version."),
-    algorithm: str = Query("ts", description="Algorithm to download."),
-    request: Request = None,
+    service: CentralizedService = Depends(_get_centralized_service),
 ):
     """Return the centralized backbone and head weights if a newer version exists."""
-    _validate_algorithm(algorithm)
-
-    service = _get_centralized_service(request)
-
     if service.model_version <= since:
         return Response(status_code=status.HTTP_304_NOT_MODIFIED)
 
     snapshot = service.get_model_snapshot()
     return CentralizedModelDownload(**snapshot)
+
+@router.get(
+    "/version",
+    summary="Centralized model version",
+)
+async def centralized_model_version(
+    service: CentralizedService = Depends(_get_centralized_service),
+):
+    """Return the current centralized model version."""
+    return service.model_version
+
+
+@router.get(
+    "/status",
+    response_model=CentralizedTrainingStatus,
+    summary="Centralized training queue status",
+)
+async def centralized_training_status(
+    service: CentralizedService = Depends(_get_centralized_service),
+):
+    """Returns the current state of the centralized training queue."""
+    return CentralizedTrainingStatus(
+        current_version=service.model_version,
+        queued_clients=len(service._pending_clients),
+        total_rounds_completed=service._rounds_completed,
+        pool_size=len(service._tuple_pool),
+        clients_per_round=CENTRALIZED_CLIENTS_PER_ROUND,
+    )

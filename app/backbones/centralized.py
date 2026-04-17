@@ -3,10 +3,21 @@ Centralized Training Service
 =============================
 Manages a centralized backbone + global heads for the centralized experiment arm.
 
+Design decisions reflected here:
 - Receives raw interaction tuples from centralized-mode clients.
-- Retrains the backbone on the accumulated tuple pool.
-- Applies Bayesian online updates to global shared heads (item, price, nudge).
-- Persists all state to the database so the server can restart without loss.
+- Uploads are buffered in memory, keyed by ``client_id``. Multiple uploads
+  from the same client before a round triggers append to that client's
+  tuple buffer but do not increase the unique-client count.
+- A training round runs when exactly ``CENTRALIZED_CLIENTS_PER_ROUND``
+  unique clients have uploaded — matching the FL aggregator's strict
+  batch semantics so the federated and centralized arms train on the
+  same number of client contributions per round (fair experimental
+  comparison).
+- On round trigger: merge the buffered tuples into the persistent pool
+  (bounded by ``MAX_TUPLE_POOL_SIZE``), retrain the backbone on the full
+  pool, apply Bayesian online updates to the global item/price/nudge
+  heads for each tuple from the round, bump ``model_version``, and
+  persist to PostgreSQL.
 """
 
 from __future__ import annotations
@@ -15,6 +26,7 @@ import asyncio
 import base64
 import gzip
 import json
+import os
 import random
 from collections import OrderedDict
 from typing import Any
@@ -30,8 +42,10 @@ from app.db.models.centralized import CentralizedModelVersion
 from app.logger import logger
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Configuration — overridable via environment variables
 # ---------------------------------------------------------------------------
+CLIENTS_PER_ROUND = int(os.getenv("CENTRALIZED_CLIENTS_PER_ROUND", "2"))
+
 RETRAIN_LR = 1e-3
 RETRAIN_EPOCHS = 3
 RETRAIN_BATCH_SIZE = 32
@@ -262,11 +276,19 @@ class CentralizedService:
         self.price_head = TSPriceHead()
         self.nudge_head = TSNudgeHead()
 
-        # Tuple pool (bounded ring buffer via list + trim)
+        # Persistent tuple pool (bounded ring buffer via list + trim).
+        # Survives restarts via centralized_model_versions.
         self._tuple_pool: list[dict] = []
+
+        # Per-round client batch, in memory only (lost on restart, same as
+        # the FL aggregator queue). A round triggers when exactly
+        # ``CLIENTS_PER_ROUND`` unique clients have uploaded.
+        self._pending_clients: set[str] = set()
+        self._pending_tuples: list[dict] = []
 
         # Versioning
         self.model_version: int = 0
+        self._rounds_completed: int = 0
 
     # ── Initialisation ─────────────────────────────────────────────────────
 
@@ -358,44 +380,92 @@ class CentralizedService:
 
     # ── Core processing ────────────────────────────────────────────────────
 
-    async def process_interactions(self, client_id: str, algorithm: str,
-                                   count: int, data: str) -> int:
+    async def process_interactions(
+        self, client_id: str, count: int, data: str
+    ) -> tuple[int, bool, int]:
         """
-        Decode a batch of interaction tuples, retrain the backbone, update
-        global heads, bump model_version, and persist to the database.
+        Buffer a client's interaction tuples. When exactly
+        ``CLIENTS_PER_ROUND`` unique clients have uploaded, run a training
+        round (retrain backbone + update heads + persist + bump version).
 
-        Returns the new model_version.
+        Returns ``(model_version, round_triggered, queued_client_count)``.
+        ``model_version`` reflects the latest persisted model — it will only
+        change when ``round_triggered`` is ``True``.
         """
         tuples = decode_tuples(data)
-        logger.info(
-            "Centralized: received %d tuples from client='%s' (algorithm=%s)",
-            len(tuples), client_id, algorithm,
-        )
 
         async with self._lock:
-            # Append to pool, trim to window
-            self._tuple_pool.extend(tuples)
-            if len(self._tuple_pool) > MAX_TUPLE_POOL_SIZE:
-                self._tuple_pool = self._tuple_pool[-MAX_TUPLE_POOL_SIZE:]
+            self._pending_clients.add(client_id)
+            self._pending_tuples.extend(tuples)
 
-            # Retrain backbone on the pool
-            loss = retrain_backbone(self.backbone, self.reward_predictor, self._tuple_pool)
-            logger.info("Centralized backbone retrained: loss=%.6f, pool_size=%d",
-                        loss, len(self._tuple_pool))
+            queued = len(self._pending_clients)
+            logger.info(
+                "Centralized: buffered %d tuples from '%s' — %d/%d clients ready "
+                "(round_buffered_tuples=%d)",
+                len(tuples),
+                client_id,
+                queued,
+                CLIENTS_PER_ROUND,
+                len(self._pending_tuples),
+            )
 
-            # Update global heads with each tuple in order
-            for t in tuples:
-                apply_tuple_to_heads(self.backbone, self.item_head,
-                                     self.price_head, self.nudge_head, t)
+            triggered = queued == CLIENTS_PER_ROUND
+            if triggered:
+                await self._run_training_round()
 
-            # Bump version
-            self.model_version += 1
+            return self.model_version, triggered, len(self._pending_clients)
 
-            # Persist to DB
-            await self._persist_to_db()
-            logger.info("Centralized model updated to version=%d", self.model_version)
+    async def _run_training_round(self) -> None:
+        """
+        Merge the round's buffered tuples into the persistent pool, retrain
+        the backbone on the full pool, apply head updates for the round's
+        tuples, bump ``model_version``, persist, and clear the round buffer.
 
-            return self.model_version
+        Must be called with ``self._lock`` held.
+        """
+        batch_tuples = self._pending_tuples
+        batch_clients = len(self._pending_clients)
+
+        if not batch_tuples:
+            logger.warning(
+                "Centralized training round triggered with empty tuple buffer "
+                "(clients=%d) — skipping retrain.",
+                batch_clients,
+            )
+            self._pending_clients.clear()
+            self._pending_tuples = []
+            return
+
+        self._tuple_pool.extend(batch_tuples)
+        if len(self._tuple_pool) > MAX_TUPLE_POOL_SIZE:
+            self._tuple_pool = self._tuple_pool[-MAX_TUPLE_POOL_SIZE:]
+
+        loss = await asyncio.to_thread(
+            retrain_backbone, self.backbone, self.reward_predictor, self._tuple_pool
+        )
+
+        for t in batch_tuples:
+            apply_tuple_to_heads(
+                self.backbone, self.item_head, self.price_head, self.nudge_head, t
+            )
+
+        self.model_version += 1
+        await self._persist_to_db()
+
+        self._rounds_completed += 1
+        logger.info(
+            "Centralized training round complete — version=%d clients=%d "
+            "round_tuples=%d pool_size=%d loss=%.6f rounds_completed=%d",
+            self.model_version,
+            batch_clients,
+            len(batch_tuples),
+            len(self._tuple_pool),
+            loss,
+            self._rounds_completed,
+        )
+
+        self._pending_clients.clear()
+        self._pending_tuples = []
 
     # ── Model serialisation for GET endpoint ───────────────────────────────
 

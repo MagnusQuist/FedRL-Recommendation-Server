@@ -13,7 +13,7 @@ ensure experimental fairness at time-zero.
 Environment variables:
     PRETRAINED_WEIGHTS_PATH   Path to the backbone_weights.npz produced by the
                               pretrain script.
-                              Default: data/pretrained/pretrained_backbone_weights.npz
+                              Default: app/db/seeding/data/pretrained/pretrained_backbone_weights.npz
 """
 
 from __future__ import annotations
@@ -28,8 +28,8 @@ import numpy as np
 from sqlalchemy import select
 
 from app.db import AsyncSessionLocal
-from app.db.models.backbone import GlobalBackboneVersion
 from app.db.models.centralized import CentralizedModelVersion
+from app.db.models.federated import FederatedBackboneVersion
 from app.logger import logger
 
 # ---------------------------------------------------------------------------
@@ -40,10 +40,12 @@ HIDDEN_DIM = 64
 OUTPUT_DIM = 32
 INITIAL_VERSION = 1
 
-FEDERATED_ALGORITHM = "ts"
+_DEFAULT_PRETRAINED_WEIGHTS_PATH = (
+    Path(__file__).resolve().parent / "data" / "pretrained" / "pretrained_backbone_weights.npz"
+)
 
 PRETRAINED_WEIGHTS_PATH = Path(
-    os.getenv("PRETRAINED_WEIGHTS_PATH", "data/pretrained/pretrained_backbone_weights.npz")
+    os.getenv("PRETRAINED_WEIGHTS_PATH", str(_DEFAULT_PRETRAINED_WEIGHTS_PATH))
 )
 
 _NUDGE_TYPES = ["N1", "N2", "N3", "N4"]
@@ -144,9 +146,8 @@ def _default_reward_predictor() -> dict:
 async def _federated_backbone_exists() -> bool:
     async with AsyncSessionLocal() as db:
         result = await db.execute(
-            select(GlobalBackboneVersion)
-            .where(GlobalBackboneVersion.algorithm == FEDERATED_ALGORITHM)
-            .where(GlobalBackboneVersion.version == INITIAL_VERSION)
+            select(FederatedBackboneVersion)
+            .where(FederatedBackboneVersion.version == INITIAL_VERSION)
             .limit(1)
         )
         return result.scalar_one_or_none() is not None
@@ -167,13 +168,13 @@ async def _centralized_backbone_exists() -> bool:
 # ---------------------------------------------------------------------------
 async def seed_federated_backbone() -> None:
     """
-    Insert the initial federated backbone (version 1) into GlobalBackboneVersion
+    Insert the initial federated backbone (version 1) into FederatedBackboneVersion
     if it does not already exist.  Weights are loaded from PRETRAINED_WEIGHTS_PATH.
     """
     if await _federated_backbone_exists():
         logger.info(
-            "Federated backbone (algorithm='%s', version=%d) already exists — skipping.",
-            FEDERATED_ALGORITHM, INITIAL_VERSION,
+            "Federated backbone version=%d already exists — skipping.",
+            INITIAL_VERSION,
         )
         return
 
@@ -181,10 +182,9 @@ async def seed_federated_backbone() -> None:
     blob = serialise_weights(weights)
 
     async with AsyncSessionLocal() as db:
-        row = GlobalBackboneVersion(
+        row = FederatedBackboneVersion(
             version=INITIAL_VERSION,
             weights_blob=blob,
-            algorithm=FEDERATED_ALGORITHM,
             client_count=0,
             total_interactions=0,
         )
@@ -231,3 +231,4 @@ async def seed_centralized_backbone() -> None:
         "Seeded centralized backbone id=%d version=%d (blob=%d bytes).",
         row.id, row.version, len(row.backbone_blob),
     )
+

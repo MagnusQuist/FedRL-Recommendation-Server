@@ -20,15 +20,7 @@ TABLE_NAMES = [
 ]
 
 
-def _find_project_root(start: Path) -> Path:
-    for candidate in [start, *start.parents]:
-        if (candidate / "data").exists():
-            return candidate
-    raise FileNotFoundError("Could not find project root containing a /data folder.")
-
-
-def _get_data_dir() -> Path:
-    return _find_project_root(Path(__file__).resolve()).joinpath("data")
+DATA_DIR = Path(__file__).resolve().parent / "data"
 
 
 def _get_database_url() -> str:
@@ -247,7 +239,7 @@ async def _reset_sequence(conn, table_name: str, pk_column: str) -> None:
 
 
 async def seed_catalogue() -> None:
-    data_dir = _get_data_dir()
+    data_dir = DATA_DIR
     database_url = _get_database_url()
 
     categories = _load_categories(data_dir)
@@ -310,3 +302,4 @@ async def seed_catalogue() -> None:
 
 if __name__ == "__main__":
     asyncio.run(seed_catalogue())
+

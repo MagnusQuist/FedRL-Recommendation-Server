@@ -1,20 +1,19 @@
 """
 FL Aggregation Service
 ======================
-Manages in-memory upload queues and executes per-algorithm FedAvg rounds.
+Manages in-memory upload queues and executes FedAvg rounds for the federated
+backbone.
 
 Design decisions reflected here:
-- Uploads are queued in memory per algorithm and keyed by client_id.
-- If the same client uploads twice before a round triggers for that algorithm,
-  the newer upload replaces the older one.
-- A round triggers independently per algorithm when:
-    queued uploads >= min_clients_per_round
-  OR
-    round_timeout_seconds elapses since the first upload arrived for that algorithm.
-- If round_timeout elapses but the queue is below min_clients_per_round,
-  uploads are carried forward to the next round (not discarded).
+- Uploads are queued in memory and keyed by client_id.
+- If the same client uploads twice before a round triggers, the newer upload
+  replaces the older one (queue size does not grow).
+- A round triggers when exactly ``FL_MIN_CLIENTS_PER_ROUND`` unique clients
+  have uploaded. There is no timeout — strict batch semantics, so the FL round
+  and the centralized training batch share an identical client-count constraint
+  (fair experimental comparison).
 - FedAvg: w* = Σ (n_k / n_total) * w_k — pure NumPy, no PyTorch required.
-- The aggregated backbone is persisted to PostgreSQL with per-algorithm versioning.
+- The aggregated backbone is persisted to PostgreSQL with monotonic versioning.
 """
 
 from __future__ import annotations
@@ -23,7 +22,6 @@ import asyncio
 import base64
 import gzip
 import json
-from app.logger import logger
 import os
 import time
 from dataclasses import dataclass, field
@@ -33,14 +31,13 @@ import numpy as np
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models.backbone import GlobalBackboneVersion
-from app.db.seed_backbone import FEDERATED_ALGORITHM
+from app.db.models.federated import FederatedBackboneVersion
+from app.logger import logger
 
 # ---------------------------------------------------------------------------
 # Configuration — overridable via environment variables
 # ---------------------------------------------------------------------------
-MIN_CLIENTS_PER_ROUND = int(os.getenv("FL_MIN_CLIENTS_PER_ROUND", "2"))
-ROUND_TIMEOUT_SECONDS = int(os.getenv("FL_ROUND_TIMEOUT_SECONDS", "60"))
+CLIENTS_PER_ROUND = int(os.getenv("FEDERATED_CLIENTS_PER_ROUND", "2"))
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +48,6 @@ class QueuedUpload:
     client_id: str
     backbone_version: int
     interaction_count: int
-    algorithm: str
     weights: dict[str, np.ndarray]
     received_at: float = field(default_factory=time.monotonic)
 
@@ -61,15 +57,8 @@ class QueuedUpload:
 # ---------------------------------------------------------------------------
 class FLAggregator:
     def __init__(self) -> None:
-        self._queues: dict[str, dict[str, QueuedUpload]] = {
-            FEDERATED_ALGORITHM: {}
-        }
-        self._round_starts: dict[str, Optional[float]] = {
-            FEDERATED_ALGORITHM: None
-        }
-        self._rounds_completed: dict[str, int] = {
-            FEDERATED_ALGORITHM: 0
-        }
+        self._queue: dict[str, QueuedUpload] = {}
+        self._rounds_completed: int = 0
         self._lock = asyncio.Lock()
 
     # ── Public API ──────────────────────────────────────────────────────────
@@ -79,109 +68,67 @@ class FLAggregator:
         client_id: str,
         backbone_version: int,
         interaction_count: int,
-        algorithm: str,
         weights_dict: dict[str, list],
         db: AsyncSession,
     ) -> tuple[bool, int]:
         """
-        Add or replace a client's upload in the queue for the given algorithm.
+        Add or replace a client's upload in the queue.
 
-        Returns (round_triggered, queued_client_count_for_algorithm).
-        If a round triggers, FedAvg is run and the result persisted to Postgres.
+        Returns ``(round_triggered, queued_client_count)``. If a round triggers,
+        FedAvg is run and the result persisted to Postgres.
         """
-        self._validate_algorithm(algorithm)
         weights = {k: np.array(v, dtype=np.float32) for k, v in weights_dict.items()}
 
         async with self._lock:
-            queue = self._queues[algorithm]
-            queue[client_id] = QueuedUpload(
+            self._queue[client_id] = QueuedUpload(
                 client_id=client_id,
                 backbone_version=backbone_version,
                 interaction_count=interaction_count,
-                algorithm=algorithm,
                 weights=weights,
             )
 
-            if self._round_starts[algorithm] is None:
-                self._round_starts[algorithm] = time.monotonic()
-
-            queued = len(queue)
+            queued = len(self._queue)
             logger.info(
-                "Queued upload from '%s' — %d/%d clients ready (algorithm=%s, n_k=%d)",
+                "Queued upload from '%s' — %d/%d clients ready (n_k=%d)",
                 client_id,
                 queued,
-                MIN_CLIENTS_PER_ROUND,
-                algorithm,
+                CLIENTS_PER_ROUND,
                 interaction_count,
             )
 
-            triggered = self._should_trigger(algorithm)
+            # The lock guarantees we never jump from N-1 to N+1: every enqueue
+            # increments by 1 or replaces an existing entry, and the check
+            # happens before the next enqueue can run. Any queue size above N
+            # indicates a programmer error.
+            assert queued <= CLIENTS_PER_ROUND, (
+                f"Federated queue overshot the configured batch size: "
+                f"{queued} > {CLIENTS_PER_ROUND}. This should be impossible "
+                "with the aggregator lock held."
+            )
+
+            triggered = queued == CLIENTS_PER_ROUND
             if triggered:
-                await self._run_fedavg(algorithm, db)
+                await self._run_fedavg(db)
 
-            return triggered, len(self._queues[algorithm])
-
-    async def check_timeout(self, db: AsyncSession) -> bool:
-        """
-        Called periodically by the background timeout task.
-
-        Checks each algorithm queue independently.
-        Returns True if at least one round was triggered.
-        """
-        triggered_any = False
-
-        async with self._lock:
-            for algorithm in (FEDERATED_ALGORITHM,):
-                queue = self._queues[algorithm]
-                round_start = self._round_starts[algorithm]
-
-                if not queue or round_start is None:
-                    continue
-
-                elapsed = time.monotonic() - round_start
-                if elapsed < ROUND_TIMEOUT_SECONDS:
-                    continue
-
-                queued = len(queue)
-                if queued < MIN_CLIENTS_PER_ROUND:
-                    logger.info(
-                        "Round timeout elapsed for algorithm='%s' but only %d/%d clients queued — "
-                        "carrying uploads forward.",
-                        algorithm,
-                        queued,
-                        MIN_CLIENTS_PER_ROUND,
-                    )
-                    self._round_starts[algorithm] = time.monotonic()
-                    continue
-
-                await self._run_fedavg(algorithm, db)
-                triggered_any = True
-
-        return triggered_any
+            return triggered, len(self._queue)
 
     async def get_current_version(
         self,
         db: AsyncSession,
-        algorithm: str,
-    ) -> Optional[GlobalBackboneVersion]:
-        """Return the latest persisted backbone for the given algorithm."""
-        self._validate_algorithm(algorithm)
-
+    ) -> Optional[FederatedBackboneVersion]:
+        """Return the latest persisted federated backbone."""
         result = await db.execute(
-            select(GlobalBackboneVersion)
-            .where(GlobalBackboneVersion.algorithm == algorithm)
-            .order_by(GlobalBackboneVersion.version.desc())
+            select(FederatedBackboneVersion)
+            .order_by(FederatedBackboneVersion.version.desc())
             .limit(1)
         )
         return result.scalar_one_or_none()
 
-    def queued_client_ids(self, algorithm: str) -> list[str]:
-        self._validate_algorithm(algorithm)
-        return list(self._queues[algorithm].keys())
+    def queued_client_ids(self) -> list[str]:
+        return list(self._queue.keys())
 
-    def rounds_completed(self, algorithm: str) -> int:
-        self._validate_algorithm(algorithm)
-        return self._rounds_completed[algorithm]
+    def rounds_completed(self) -> int:
+        return self._rounds_completed
 
     def metrics_snapshot(self) -> dict[str, Any]:
         """
@@ -189,90 +136,54 @@ class FLAggregator:
 
         Does not expose model weights.
         """
-        per_algorithm: dict[str, Any] = {}
+        queued_uploads = list(self._queue.values())
+        queued_client_ids = [u.client_id for u in queued_uploads]
+        queued_client_count = len(queued_client_ids)
 
-        for algorithm in (FEDERATED_ALGORITHM,):
-            queue = self._queues[algorithm]
-            queued_uploads = list(queue.values())
-            queued_client_ids = [u.client_id for u in queued_uploads]
-            queued_client_count = len(queued_client_ids)
+        queued_total_interactions = sum(u.interaction_count for u in queued_uploads)
+        queued_avg_interactions = (
+            queued_total_interactions / queued_client_count
+            if queued_client_count
+            else None
+        )
 
-            queued_total_interactions = sum(u.interaction_count for u in queued_uploads)
-            queued_avg_interactions = (
-                queued_total_interactions / queued_client_count
-                if queued_client_count
-                else None
-            )
-
-            oldest_received = min((u.received_at for u in queued_uploads), default=None)
-            oldest_upload_age_seconds = (
-                time.monotonic() - oldest_received if oldest_received is not None else None
-            )
-
-            round_start = self._round_starts[algorithm]
-            if round_start is None or not queued_client_ids:
-                round_elapsed = None
-                seconds_until_timeout = None
-            else:
-                round_elapsed = time.monotonic() - round_start
-                seconds_until_timeout = max(0.0, float(ROUND_TIMEOUT_SECONDS) - round_elapsed)
-
-            per_algorithm[algorithm] = {
-                "queued_client_ids": queued_client_ids,
-                "queued_client_count": queued_client_count,
-                "queued_total_interactions": queued_total_interactions,
-                "queued_avg_interactions": queued_avg_interactions,
-                "queued_oldest_upload_age_seconds": oldest_upload_age_seconds,
-                "rounds_completed": self._rounds_completed[algorithm],
-                "round_elapsed_seconds": round_elapsed,
-                "round_seconds_until_timeout": seconds_until_timeout,
-            }
+        oldest_received = min((u.received_at for u in queued_uploads), default=None)
+        oldest_upload_age_seconds = (
+            time.monotonic() - oldest_received if oldest_received is not None else None
+        )
 
         return {
-            "algorithms": per_algorithm,
-            "min_clients_per_round": MIN_CLIENTS_PER_ROUND,
-            "round_timeout_seconds": ROUND_TIMEOUT_SECONDS,
+            "queued_client_ids": queued_client_ids,
+            "queued_client_count": queued_client_count,
+            "queued_total_interactions": queued_total_interactions,
+            "queued_avg_interactions": queued_avg_interactions,
+            "queued_oldest_upload_age_seconds": oldest_upload_age_seconds,
+            "rounds_completed": self._rounds_completed,
+            "clients_per_round": CLIENTS_PER_ROUND,
         }
 
     # ── Internal ────────────────────────────────────────────────────────────
 
-    def _validate_algorithm(self, algorithm: str) -> None:
-        if algorithm != FEDERATED_ALGORITHM:
-            raise ValueError(
-                f"Unsupported algorithm '{algorithm}'. "
-                f"Only the federated algorithm '{FEDERATED_ALGORITHM}' is supported."
-            )
-
-    def _should_trigger(self, algorithm: str) -> bool:
-        return len(self._queues[algorithm]) >= MIN_CLIENTS_PER_ROUND
-
-    async def _next_version(self, db: AsyncSession, algorithm: str) -> int:
-        latest = await self.get_current_version(db, algorithm)
+    async def _next_version(self, db: AsyncSession) -> int:
+        latest = await self.get_current_version(db)
         return 1 if latest is None else latest.version + 1
 
-    async def _run_fedavg(self, algorithm: str, db: AsyncSession) -> None:
+    async def _run_fedavg(self, db: AsyncSession) -> None:
         """
-        Execute FedAvg over all queued uploads for one algorithm and persist the result.
+        Execute FedAvg over all queued uploads and persist the result.
 
         w* = Σ (n_k / n_total) * w_k
         """
-        self._validate_algorithm(algorithm)
-
-        queue = self._queues[algorithm]
-        if not queue:
-            logger.warning(
-                "FedAvg triggered but queue is empty for algorithm '%s'.",
-                algorithm,
-            )
+        if not self._queue:
+            logger.warning("FedAvg triggered but queue is empty.")
             return
 
-        eligible = list(queue.values())
+        eligible = list(self._queue.values())
         n_total = sum(u.interaction_count for u in eligible)
 
         if n_total <= 0:
             logger.warning(
-                "FedAvg aborted for algorithm='%s' because total interactions is %d.",
-                algorithm,
+                "FedAvg aborted because total interactions is %d.",
                 n_total,
             )
             return
@@ -281,13 +192,12 @@ class FLAggregator:
         base_versions = {u.backbone_version for u in eligible}
         if len(base_versions) > 1:
             logger.warning(
-                "FedAvg for algorithm='%s' includes mixed base versions: %s",
-                algorithm,
+                "FedAvg includes mixed base versions: %s",
                 sorted(base_versions),
             )
 
         aggregated: dict[str, np.ndarray] = {}
-        param_keys = next(iter(eligible[0].weights.keys() for _ in [0]))
+        param_keys = list(eligible[0].weights.keys())
 
         for key in param_keys:
             aggregated[key] = sum(
@@ -299,12 +209,11 @@ class FLAggregator:
         compressed = gzip.compress(json.dumps(weights_json).encode("utf-8"))
         blob = base64.b64encode(compressed).decode("utf-8")
 
-        next_version = await self._next_version(db, algorithm)
+        next_version = await self._next_version(db)
 
-        new_backbone = GlobalBackboneVersion(
+        new_backbone = FederatedBackboneVersion(
             version=next_version,
             weights_blob=blob,
-            algorithm=algorithm,
             client_count=len(eligible),
             total_interactions=n_total,
         )
@@ -313,18 +222,17 @@ class FLAggregator:
         await db.commit()
         await db.refresh(new_backbone)
 
-        self._rounds_completed[algorithm] += 1
+        self._rounds_completed += 1
         logger.info(
-            "FedAvg round complete — algorithm=%s version=%d clients=%d interactions=%d rounds_completed=%d",
-            algorithm,
+            "FedAvg round complete — version=%d clients=%d interactions=%d rounds_completed=%d",
             new_backbone.version,
             len(eligible),
             n_total,
-            self._rounds_completed[algorithm],
+            self._rounds_completed,
         )
 
-        self._queues[algorithm].clear()
-        self._round_starts[algorithm] = None
+        self._queue.clear()
+
 
 def decode_backbone_blob(blob: str) -> dict[str, list]:
     logger.info("Decoding backbone weights")

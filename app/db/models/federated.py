@@ -1,10 +1,13 @@
 from datetime import datetime, timezone
-from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint
+
+from sqlalchemy import DateTime, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
+
 from app.db import Base
 
-class GlobalBackboneVersion(Base):
-    __tablename__ = "global_backbone_versions"
+
+class FederatedBackboneVersion(Base):
+    __tablename__ = "federated_model_versions"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
 
@@ -12,10 +15,6 @@ class GlobalBackboneVersion(Base):
     weights_blob: Mapped[str] = mapped_column(
         Text, nullable=False,
         comment="gzip-compressed, base64-encoded JSON of backbone weight arrays."
-    )
-    algorithm: Mapped[str] = mapped_column(
-        String(10), nullable=False,
-        comment="Algorithm this backbone belongs to: 'ts'."
     )
     client_count: Mapped[int] = mapped_column(
         Integer, nullable=False,
@@ -32,11 +31,11 @@ class GlobalBackboneVersion(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("algorithm", "version"),
+        UniqueConstraint("version"),
     )
 
     def __repr__(self) -> str:
         return (
-            f"<GlobalBackboneVersion version={self.version} "
-            f"algorithm={self.algorithm!r} clients={self.client_count}>"
+            f"<FederatedBackboneVersion version={self.version} "
+            f"clients={self.client_count}>"
         )

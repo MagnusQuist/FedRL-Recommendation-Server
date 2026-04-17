@@ -1,10 +1,8 @@
 from datetime import datetime
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from app.logger import logger
 
-from app.db.seed_backbone import FEDERATED_ALGORITHM
+from app.logger import logger
 
 
 # ---------------------------------------------------------------------------
@@ -21,21 +19,16 @@ BACKBONE_PARAM_KEYS = frozenset({
 })
 
 
-class GlobalBackboneVersionRead(BaseModel):
-    """Pydantic mirror of ORM ``GlobalBackboneVersion`` in ``app.api.schemas.backbone``."""
+class FederatedBackboneVersionRead(BaseModel):
+    """Pydantic mirror of ORM ``FederatedBackboneVersion``."""
 
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    version: int = Field(..., description="Monotonic backbone round version for this algorithm.")
+    version: int = Field(..., description="Monotonic federated backbone round version.")
     weights_blob: str = Field(
         ...,
         description="gzip-compressed, base64-encoded JSON of backbone weight arrays.",
-    )
-    algorithm: str = Field(
-        ...,
-        max_length=10,
-        description="Algorithm this backbone belongs to: 'ts'.",
     )
     client_count: int = Field(..., ge=0, description="Clients whose uploads contributed to this round.")
     total_interactions: int = Field(
@@ -48,12 +41,12 @@ class GlobalBackboneVersionRead(BaseModel):
 
 class BackboneUpload(BaseModel):
     """
-    Payload sent by a Raspberry Pi client to POST /fl/upload.
+    Payload sent by a Raspberry Pi client to POST /federated/model.
 
     backbone_weights is the gzip-compressed, base64-encoded JSON representation
-    of the backbone parameter tensors (matching what GET /fl/model returns).
+    of the backbone parameter tensors (matching what GET /federated/model returns).
 
-    Version 1 is the initial seeded global backbone for each algorithm.
+    Version 1 is the initial seeded federated backbone.
     """
     client_id: str = Field(
         ...,
@@ -69,27 +62,16 @@ class BackboneUpload(BaseModel):
         gt=0,
         description="n_k — interactions logged since the last upload.",
     )
-    algorithm: str = Field(..., description="Training algorithm used by the client.")
-
-    @field_validator("algorithm")
-    @classmethod
-    def validate_algorithm(cls, v: str) -> str:
-        if v != FEDERATED_ALGORITHM:
-            raise ValueError(
-                f"Unsupported algorithm '{v}'. Only '{FEDERATED_ALGORITHM}' is supported."
-            )
-        return v
-    
     backbone_weights: str = Field(
         ...,
-        description="Backbone weights as a base64-encoded gzip string (matches GET /fl/model).",
+        description="Backbone weights as a base64-encoded gzip string (matches GET /federated/model).",
     )
 
     @field_validator("backbone_weights", mode="before")
     @classmethod
     def validate_backbone_blob(cls, v: str | dict[str, list]) -> str | dict[str, list]:
-        logger.info("Trying to validate backbone blob")
         """Validate that backbone_weights decodes to a valid backbone parameter dict."""
+        logger.info("Trying to validate backbone blob")
         if isinstance(v, str):
             try:
                 from app.backbones.aggregator import decode_backbone_blob as _decode
@@ -99,7 +81,7 @@ class BackboneUpload(BaseModel):
                 logger.error(e)
                 raise ValueError(
                     "Invalid backbone_weights: expected a base64-encoded gzip blob of JSON. "
-                    "See GET /fl/model for the expected encoding."
+                    "See GET /federated/model for the expected encoding."
                 ) from e
         elif isinstance(v, dict):
             decoded = v
@@ -125,14 +107,13 @@ class BackboneUpload(BaseModel):
 
 class BackboneDownload(BaseModel):
     """
-    Response body for GET /backbone/model when a backbone is available.
+    Response body for GET /federated/model when a backbone is available.
 
-    Subset of ``GlobalBackboneVersionRead``: ``backbone_weights`` is the API
+    Subset of ``FederatedBackboneVersionRead``: ``backbone_weights`` is the API
     name for ORM ``weights_blob``.
     """
 
     version: int = Field(..., ge=1)
-    algorithm: Literal["ts"]
     client_count: int = Field(..., ge=0)
     total_interactions: int = Field(..., ge=0)
     backbone_weights: str
@@ -147,14 +128,16 @@ class UploadAck(BaseModel):
 
 
 class RoundStatus(BaseModel):
-    """Response body for GET /backbone/status — useful for debugging during experiments."""
+    """Response body for GET /federated/status — useful for debugging during experiments."""
     current_version: int = Field(
         ...,
         ge=0,
         description="Latest stored backbone version; 0 if none seeded yet.",
     )
-    algorithm: Literal["ts"]
     queued_clients: list[str]
     total_rounds_completed: int = Field(..., ge=0)
-    min_clients_per_round: int = Field(..., ge=1)
-    round_timeout_seconds: int = Field(..., ge=1)
+    clients_per_round: int = Field(
+        ...,
+        ge=1,
+        description="Exact number of unique clients required to trigger a FedAvg round.",
+    )

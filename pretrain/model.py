@@ -17,7 +17,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from app.db.seed_backbone import HIDDEN_DIM, INPUT_DIM, OUTPUT_DIM
+from app.db.seeding.seed_backbone import HIDDEN_DIM, INPUT_DIM, OUTPUT_DIM
 
 
 class Backbone(nn.Module):

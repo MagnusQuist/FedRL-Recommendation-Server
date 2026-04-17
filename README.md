@@ -13,7 +13,7 @@ Exposes a food catalogue REST API and learning aggregation endpoints for Raspber
 | **centralized** | Clients upload raw interaction tuples; server trains the model centrally | `GET /api/v1/centralized/model`, `POST /api/v1/centralized/interactions` |
 | **control** | No model, no server communication | None |
 
-Both `federated` and `centralized` are initialised from the **same pretrained backbone seed** (`BACKBONE_INIT_SEED`, default `42`) so the experiment starts from an identical baseline. A single server instance handles all client modes simultaneously.
+Both `federated` and `centralized` are initialised from the **same pretrained backbone weights** (produced by the pretrain pipeline) so the experiment starts from an identical baseline. A single server instance handles all client modes simultaneously.
 
 ---
 
@@ -51,19 +51,25 @@ This starts:
 - **FastAPI server** on `localhost:8000`
 - **pgAdmin** on `localhost:5050` (user: `admin@fedrl.local` / `admin`)
 
-### 3. Database schema
+### 3. Database schema & seeding
 
-On startup the server runs `Base.metadata.create_all()` when `AUTO_CREATE_MODELS=true` (default in Docker Compose). This **creates missing tables** but does not alter existing ones. For schema changes on an existing database, apply manual SQL or wipe the volume.
+Bootstrap is handled by a one-shot `seed` service in docker-compose that runs `python -m app.db.seeding` (see [`app/db/seeding`](app/db/seeding/)) before the `server` service starts. When the target database has no tables it:
 
-### 4. Seed the food catalogue
+1. Creates the schema via `Base.metadata.create_all()`.
+2. Seeds the federated + centralized backbones from `PRETRAINED_WEIGHTS_PATH` (defaults to `app/db/seeding/data/pretrained/pretrained_backbone_weights.npz`).
+3. Seeds the food catalogue from the JSON/CSV files under `app/db/seeding/data/`.
 
-The catalogue is seeded from three JSON files under `data/` by [`app/db/seed_catalogue.py`](app/db/seed_catalogue.py).
+If the schema already exists the seed container is a no-op and exits immediately, so it is safe on every `docker compose up`. For schema changes on an existing database, apply manual SQL or wipe the volume.
 
-**Startup behaviour:** `AUTO_SEED_DATA_ON_STARTUP=true` (default) seeds backbone + catalogue in the background after the server starts. Set to `false` if seeding manually.
+### 4. Re-seeding manually
 
 ```bash
-# Seed manually (inside the server container or with DATABASE_URL set):
-docker compose exec server python -m app.db.seed_catalogue
+# Force re-create tables + re-run every seeder (full replace):
+docker compose run --rm seed python -m app.db.seeding --force
+
+# Re-seed only parts of the database:
+docker compose run --rm seed python -m app.db.seeding --catalogue-only
+docker compose run --rm seed python -m app.db.seeding --backbones-only
 ```
 
 ### 5. Verify
@@ -136,7 +142,6 @@ Interactive API docs: **http://localhost:8000/docs**
 ```json
 {
   "client_id": "client_01",
-  "algorithm": "ts",
   "count": 10,
   "data": "<gzip+b64 encoded JSON array of interaction tuples>"
 }
@@ -144,8 +149,15 @@ Interactive API docs: **http://localhost:8000/docs**
 
 **POST response (200):**
 ```json
-{ "accepted": true, "server_model_version": 8 }
+{
+  "accepted": true,
+  "server_model_version": 8,
+  "round_triggered": false,
+  "queued_clients": 1
+}
 ```
+
+`server_model_version` only advances when `round_triggered` is `true` — i.e. when this upload completed a batch of `CENTRALIZED_CLIENTS_PER_ROUND` unique clients and a training round ran.
 
 **GET response (200):**
 ```json
@@ -172,26 +184,27 @@ Interactive API docs: **http://localhost:8000/docs**
 
 ## Federated learning
 
-FedAvg is triggered per algorithm when either condition is met:
+FedAvg is triggered when **exactly** `FL_MIN_CLIENTS_PER_ROUND` unique clients have uploaded (default `2`). There is no timeout — the round waits indefinitely until the required number of clients arrives. This gives strict batch semantics that match the centralized arm's training batch size, so both experimental arms receive updates with the same amount of client signal.
 
-- **Client threshold**: `FL_MIN_CLIENTS_PER_ROUND` uploads queued (default `2`)
-- **Timeout**: `FL_ROUND_TIMEOUT_SECONDS` elapsed since first upload (default `60`)
-
-Aggregated backbone versions are persisted to PostgreSQL (`global_backbone_versions` table). If fewer than `FL_MIN_CLIENTS_PER_ROUND` clients have uploaded when the timeout fires, uploads are carried forward to the next round.
+Uploads are keyed by `client_id`, so re-uploads from the same client replace the previous entry rather than growing the queue. Aggregated backbone versions are persisted to PostgreSQL (`federated_backbone_versions` table).
 
 ---
 
 ## Centralized training
 
-On each `POST /centralized/interactions`:
+Uploads are **buffered** in memory and keyed by `client_id`. A training round runs when **exactly** `CENTRALIZED_CLIENTS_PER_ROUND` unique clients have uploaded (default `2`). Re-uploads from the same client before the round triggers append more tuples to that client's buffer but do not increase the unique-client count. There is no timeout — the round waits indefinitely until the required number of clients arrives.
 
-1. Decodes the gzip+b64 tuple batch.
-2. Appends tuples to a persistent pool (capped at `CENTRALIZED_MAX_TUPLES`, default `2000`).
-3. Retrains the backbone on the full pool (3 epochs, Adam lr=1e-3).
-4. Applies a Bayesian online update to the global item, price, and nudge heads for every tuple.
-5. Increments `model_version` and persists all state to disk under `data/centralized/`.
+This mirrors the federated arm's strict batch semantics: both arms receive updates with the same number of client contributions per round, so their comparison is fair. Set `CENTRALIZED_CLIENTS_PER_ROUND` equal to `FEDERATED_CLIENTS_PER_ROUND`.
 
-State is fully restored from disk on server restart — no training progress is lost.
+When a round triggers, the service:
+
+1. Merges the round's buffered tuples into the persistent pool (a sliding window bounded by `MAX_TUPLE_POOL_SIZE`, default `2000`).
+2. Retrains the backbone on the full pool (3 epochs, Adam lr=1e-3).
+3. Applies a Bayesian online update to the global item, price, and nudge heads for each tuple contributed in this round.
+4. Increments `model_version` and persists backbone + heads + pool to PostgreSQL (`centralized_model_versions` table).
+5. Clears the in-memory round buffer.
+
+The persistent pool is fully restored on server restart. The in-memory round buffer is not — partially-filled batches at restart time are re-collected from the next client uploads (same liveness guarantee as the FL aggregator's queue).
 
 ---
 
@@ -212,30 +225,24 @@ State is fully restored from disk on server restart — no training progress is 
 │   │   │   ├── images.py
 │   │   │   └── metrics.py         # Dev dashboard
 │   │   └── schemas/
-│   │       ├── backbone.py        # Federated request/response models
+│   │       ├── federated.py       # Federated request/response models
 │   │       └── centralized.py     # Centralized request/response models
 │   ├── db/
 │   │   ├── database.py            # Async SQLAlchemy engine + session
 │   │   ├── models/
-│   │   │   └── backbone.py        # GlobalBackboneVersion ORM model
-│   │   ├── seed_backbone.py       # Pretrained backbone seed (version 1)
-│   │   └── helpers/
-│   │       └── seed_db.py         # Startup seed orchestration
+│   │   │   └── federated.py       # FederatedBackboneVersion ORM model
+│   │   └── seeding/               # Bootstrap + seed package (python -m app.db.seeding)
+│   │       ├── runner.py          # ensure_models / seed_all / bootstrap_if_empty
+│   │       ├── seed_backbone.py   # Pretrained backbone seed (version 1)
+│   │       ├── seed_catalogue.py  # Food catalogue seed
+│   │       ├── seed_status.py     # has_tables / is_database_seeded helpers
+│   │       ├── data/              # Catalogue CSV/JSON + pretrained/ weights
+│   │       └── __main__.py        # CLI entrypoint
 │   ├── fl/
 │   │   ├── aggregator.py          # FedAvg aggregation service
 │   │   └── centralized.py        # Centralized backbone, heads, retraining, persistence
 │   ├── web/                       # Dev dashboard static assets
 │   └── requirements.txt
-├── data/
-│   ├── categories.json
-│   ├── substitution_groups.json
-│   ├── product_items.json
-│   └── centralized/               # Centralized model persistence (auto-created at runtime)
-│       ├── backbone_centralized.pt
-│       ├── reward_predictor_centralized.pt
-│       ├── heads_centralized.json
-│       ├── tuple_pool.json
-│       └── meta.json
 ├── pretrain/                      # Offline backbone pretraining utilities
 ├── .github/workflows/             # CI/CD — build & push to ghcr.io
 ├── Dockerfile
@@ -254,11 +261,8 @@ State is fully restored from disk on server restart — no training progress is 
 | `POSTGRES_HOST` | `localhost` | Database host |
 | `POSTGRES_PORT` | `5432` | Database port |
 | `POSTGRES_DB` | `fedrl` | Database name |
-| `AUTO_CREATE_MODELS` | `false` | Run `create_all` on startup |
-| `AUTO_SEED_DATA_ON_STARTUP` | `true` | Seed catalogue + backbone in background |
-| `BACKBONE_INIT_SEED` | `42` | Random seed for pretrained backbone initialisation (shared by both federated and centralized) |
-| `FL_MIN_CLIENTS_PER_ROUND` | `2` | Minimum uploads to trigger FedAvg |
-| `FL_ROUND_TIMEOUT_SECONDS` | `60` | FedAvg timeout (seconds) |
+| `FEDERATED_CLIENTS_PER_ROUND` | `2` | Exact number of unique client uploads required per FedAvg round |
+| `CENTRALIZED_CLIENTS_PER_ROUND` | `2` | Exact number of unique client uploads required per centralized training round (should match `FEDERATED_CLIENTS_PER_ROUND`) |
 
 ---
 
@@ -279,5 +283,5 @@ Pull requests trigger a build-only run (no push) to validate the Dockerfile.
 
 - **No authentication** — the server assumes a trusted local network between Pi clients and the developer's machine. By design for the thesis MVP.
 - **One server, three modes** — a single server process handles federated and centralized clients simultaneously. Control-mode clients do not contact the server at all.
-- **Experimental fairness** — both federated and centralized backbones are seeded from identical initial weights (`BACKBONE_INIT_SEED=42`) so comparisons are valid from step 0.
-- **Centralized retrains on every upload** — unlike federated which batches clients into rounds. If upload frequency differs significantly between arms this asymmetry should be considered when interpreting results.
+- **Experimental fairness** — both federated and centralized backbones are seeded from identical initial weights (the same pretrained `npz` produced by the pretrain pipeline) so comparisons are valid from step 0.
+- **Symmetric batch semantics across arms** — both federated and centralized rounds trigger on exactly N unique client uploads (`FEDERATED_CLIENTS_PER_ROUND` / `CENTRALIZED_CLIENTS_PER_ROUND`). Keep both values equal so the two arms train on the same amount of client signal per round.
