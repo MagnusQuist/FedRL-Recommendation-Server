@@ -468,7 +468,7 @@ class CentralizedService:
         """
         backbone_dict = _backbone_to_serialisable(self.backbone)
         return {
-            "model_version": self.model_version,
+            "version": self.model_version,
             "backbone_weights": _encode(backbone_dict),
             "head_weights": {
                 "item": _encode(self.item_head.state_dict()),

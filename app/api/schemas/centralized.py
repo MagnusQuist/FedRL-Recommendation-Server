@@ -1,6 +1,6 @@
 """Pydantic schemas for the centralized training endpoints."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class InteractionUpload(BaseModel):
@@ -78,7 +78,8 @@ class CentralizedTrainingStatus(BaseModel):
 
 class CentralizedModelDownload(BaseModel):
     """Response body for GET /centralized/model."""
-    model_version: int = Field(..., ge=0)
+    
+    version: int = Field(..., ge=0)
     backbone_weights: str = Field(
         ...,
         description="gzip+base64 encoded backbone state dict.",
