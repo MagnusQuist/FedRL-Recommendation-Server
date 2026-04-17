@@ -37,6 +37,10 @@ class CentralizedModelVersion(Base):
         Text, nullable=False,
         comment="gzip-compressed, base64-encoded JSON of the interaction tuple pool.",
     )
+    client_count: Mapped[int] = mapped_column(
+        Integer, nullable=False,
+        comment="Number of clients whose uploads contributed to this round.",
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

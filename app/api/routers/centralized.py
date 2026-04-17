@@ -87,7 +87,7 @@ async def centralized_model_version(
     service: CentralizedService = Depends(_get_centralized_service),
 ):
     """Return the current centralized model version."""
-    return service.model_version
+    return { "version": service.model_version }
 
 
 @router.get(

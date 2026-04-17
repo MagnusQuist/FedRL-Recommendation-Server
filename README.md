@@ -9,7 +9,7 @@ Exposes a food catalogue REST API and learning aggregation endpoints for Raspber
 
 | Mode | Description | Server involvement |
 |------|-------------|-------------------|
-| **federated** | Clients retrain locally and upload backbone weights; server aggregates via FedAvg | `GET/POST /api/v1/backbone/model` |
+| **federated** | Clients retrain locally and upload backbone weights; server aggregates via FedAvg | `GET/POST /api/v1/federated/model` |
 | **centralized** | Clients upload raw interaction tuples; server trains the model centrally | `GET /api/v1/centralized/model`, `POST /api/v1/centralized/interactions` |
 | **control** | No model, no server communication | None |
 
@@ -110,10 +110,10 @@ Interactive API docs: **http://localhost:8000/docs**
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/v1/backbone/model?since=<v>&algorithm=ts` | Download global backbone if newer than `since`; returns 304 otherwise |
-| `POST` | `/api/v1/backbone/model` | Upload local backbone weights for FedAvg aggregation |
-| `GET` | `/api/v1/backbone/version?algorithm=ts` | Current global backbone version |
-| `GET` | `/api/v1/backbone/status?algorithm=ts` | Aggregation queue status (queued clients, rounds completed, timeout) |
+| `GET` | `/api/v1/federated/model?since=<v>&algorithm=ts` | Download global backbone if newer than `since`; returns 304 otherwise |
+| `POST` | `/api/v1/federated/model` | Upload local backbone weights for FedAvg aggregation |
+| `GET` | `/api/v1/federated/version?algorithm=ts` | Current global backbone version |
+| `GET` | `/api/v1/federated/status?algorithm=ts` | Aggregation queue status (queued clients, rounds completed, timeout) |
 
 **POST body:**
 ```json

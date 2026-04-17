@@ -25,10 +25,11 @@ from app.api.routers.api import router as api_router
 async def lifespan(app: FastAPI):
     """
     Startup sequence:
-      1. Initialise the FL aggregator singleton.
-      2. Load persisted state for the centralized service.
+      1. Initialise the FL aggregator and rehydrate its persisted counters.
+      2. Initialise the centralized service and rehydrate its persisted state.
     """
     aggregator = FLAggregator()
+    await aggregator.try_load_persisted_state()
     app.state.aggregator = aggregator
 
     centralized_service = CentralizedService()

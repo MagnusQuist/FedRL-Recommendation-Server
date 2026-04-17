@@ -1,18 +1,15 @@
-# ╔══════════════════════════════════════════════════════════════════════════════╗
-# ║  DEVELOPMENT ONLY                                                          ║
-# ║                                                                            ║
-# ║  Runs a local PostgreSQL container and bind-mounts the source for live     ║
-# ║  reload.  Do NOT use this in production — see docker-compose.prod.yml.     ║
-# ║                                                                            ║
-# ║  Usage:                                                                    ║
-# ║    docker compose -f docker-compose.dev.yml up                             ║
-# ║                                                                            ║
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║  DEVELOPMENT ONLY                                                         ║
+# ║                                                                           ║
+# ║  Runs a local PostgreSQL container and bind-mounts the source for live    ║
+# ║  reload.  Do NOT use this in production — see docker-compose.prod.yml.    ║
+# ║                                                                           ║
+# ║  Usage:                                                                   ║
+# ║    docker compose -f docker-compose.dev.yml up                            ║
+# ║                                                                           ║
 # ║  A one-shot `seed` service bootstraps the database before the server      ║
 # ║  starts (creates schema + seeds backbones + catalogue when empty).        ║
-# ║  To force re-seed against the running stack:                              ║
-# ║    docker compose -f docker-compose.dev.yml run --rm seed \                ║
-# ║        python -m app.db.seeding --force                                    ║
-# ╚══════════════════════════════════════════════════════════════════════════════╝
+# ╚═══════════════════════════════════════════════════════════════════════════╝
 
 services:
 
@@ -75,6 +72,7 @@ services:
       UVICORN_WORKERS: ${UVICORN_WORKERS:-1}
       FEDERATED_CLIENTS_PER_ROUND: ${FEDERATED_CLIENTS_PER_ROUND:-2}
       CENTRALIZED_CLIENTS_PER_ROUND: ${CENTRALIZED_CLIENTS_PER_ROUND:-2}
+      MAX_TUPLE_POOL_SIZE: ${MAX_TUPLE_POOL_SIZE:-2000}
     ports:
       - "8000:8000"
     networks:

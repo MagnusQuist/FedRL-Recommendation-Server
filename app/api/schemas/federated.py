@@ -12,8 +12,8 @@ from app.logger import logger
 # weights are never transmitted.
 # ---------------------------------------------------------------------------
 BACKBONE_PARAM_KEYS = frozenset({
-    "backbone.0.weight",   # Linear(28, 64) weights  — shape (64, 28)
-    "backbone.0.bias",     # Linear(28, 64) bias     — shape (64,)
+    "backbone.0.weight",   # Linear(16, 64) weights  — shape (64, 16)
+    "backbone.0.bias",     # Linear(16, 64) bias     — shape (64,)
     "backbone.2.weight",   # Linear(64, 32) weights  — shape (32, 64)
     "backbone.2.bias",     # Linear(64, 32) bias     — shape (32,)
 })
@@ -45,8 +45,6 @@ class BackboneUpload(BaseModel):
 
     backbone_weights is the gzip-compressed, base64-encoded JSON representation
     of the backbone parameter tensors (matching what GET /federated/model returns).
-
-    Version 1 is the initial seeded federated backbone.
     """
     client_id: str = Field(
         ...,

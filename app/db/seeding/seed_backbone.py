@@ -222,6 +222,7 @@ async def seed_centralized_backbone() -> None:
             price_head_blob=_encode(_default_price_head()),
             nudge_head_blob=_encode(_default_nudge_head()),
             tuple_pool_blob=_encode([]),
+            client_count=0,
         )
         db.add(row)
         await db.commit()

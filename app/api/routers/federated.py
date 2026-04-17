@@ -1,13 +1,16 @@
+from sys import version
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas.federated import BackboneDownload, BackboneUpload, RoundStatus, UploadAck
-from app.backbones.aggregator import CLIENTS_PER_ROUND
 from app.db import get_db
 from app.logger import logger
+import os
 
 router = APIRouter(prefix="/federated")
+
+CLIENTS_PER_ROUND = int(os.getenv("FEDERATED_CLIENTS_PER_ROUND", "2"))
 
 
 def _get_aggregator(request: Request):
@@ -21,12 +24,10 @@ def _get_aggregator(request: Request):
     summary="Aggregation queue status",
 )
 async def backbone_status(
-    db: AsyncSession = Depends(get_db),
     aggregator=Depends(_get_aggregator),
 ):
     """Returns the current state of the FL aggregation queue."""
-    latest = await aggregator.get_current_version(db)
-    current_version = latest.version if latest else 0
+    current_version = aggregator.model_version
 
     return RoundStatus(
         current_version=current_version,
@@ -41,24 +42,10 @@ async def backbone_status(
     summary="Federated backbone version",
 )
 async def backbone_version(
-    db: AsyncSession = Depends(get_db),
     aggregator=Depends(_get_aggregator),
 ):
     """Return the current federated backbone version."""
-    logger.info("Getting backbone version")
-
-    latest = await aggregator.get_current_version(db)
-    if latest is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No backbone found. Run the seed script first.",
-        )
-
-    return {
-        "version": latest.version,
-        "client_count": latest.client_count,
-        "total_interactions": latest.total_interactions,
-    }
+    return { "version": aggregator.model_version }
 
 
 @router.get(

@@ -35,7 +35,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.db import AsyncSessionLocal
 from app.db.models.centralized import CentralizedModelVersion
@@ -45,11 +45,11 @@ from app.logger import logger
 # Configuration — overridable via environment variables
 # ---------------------------------------------------------------------------
 CLIENTS_PER_ROUND = int(os.getenv("CENTRALIZED_CLIENTS_PER_ROUND", "2"))
+MAX_TUPLE_POOL_SIZE = int(os.getenv("MAX_TUPLE_POOL_SIZE", "2000"))
 
 RETRAIN_LR = 1e-3
 RETRAIN_EPOCHS = 3
 RETRAIN_BATCH_SIZE = 32
-MAX_TUPLE_POOL_SIZE = 2000
 CTX_PRICE_DELTA = 2  # index 2 in the 16-dim context vector
 
 NUDGE_TYPES = ["N1", "N2", "N3", "N4"]
@@ -292,22 +292,6 @@ class CentralizedService:
 
     # ── Initialisation ─────────────────────────────────────────────────────
 
-    def init_from_pretrained_weights(self, weights: dict[str, np.ndarray], version: int = 0):
-        """
-        Load backbone weights from the same pretrained checkpoint used by the
-        federated arm.  `weights` is a dict of numpy arrays keyed by
-        backbone parameter name (e.g. ``backbone.0.weight``).
-        """
-        sd = {
-            k: torch.tensor(v if isinstance(v, np.ndarray) else np.array(v, dtype=np.float32),
-                            dtype=torch.float32)
-            for k, v in weights.items()
-        }
-        self.backbone.load_state_dict(sd)
-        self.backbone.eval()
-        self.model_version = version
-        logger.info("Centralized backbone initialised from pretrained weights (version=%d).", version)
-
     async def try_load_persisted_state(self) -> bool:
         """
         Attempt to restore state from the database.
@@ -321,6 +305,14 @@ class CentralizedService:
                     .limit(1)
                 )
                 row = result.scalar_one_or_none()
+
+                completed_rounds = (
+                    await db.execute(
+                        select(func.count(CentralizedModelVersion.id)).where(
+                            CentralizedModelVersion.client_count > 0
+                        )
+                    )
+                ).scalar() or 0
 
             if row is None:
                 return False
@@ -347,8 +339,8 @@ class CentralizedService:
 
             self.model_version = row.version
             logger.info(
-                "Centralized state restored from DB: version=%d, tuples=%d",
-                self.model_version, len(self._tuple_pool),
+                "Centralized state restored from DB: version=%d, tuples=%d, rounds_completed=%d",
+                self.model_version, len(self._tuple_pool), completed_rounds,
             )
             return True
 
@@ -356,7 +348,7 @@ class CentralizedService:
             logger.exception("Failed to load persisted centralized state — will re-initialise.")
             return False
 
-    async def _persist_to_db(self):
+    async def _persist_to_db(self, client_count: int):
         """Insert a new CentralizedModelVersion row capturing the full current state."""
         backbone_blob = _encode(_backbone_to_serialisable(self.backbone))
         rp_blob = _encode({k: v.tolist() for k, v in self.reward_predictor.state_dict().items()})
@@ -374,6 +366,7 @@ class CentralizedService:
                 price_head_blob=price_blob,
                 nudge_head_blob=nudge_blob,
                 tuple_pool_blob=pool_blob,
+                client_count=client_count,
             )
             db.add(row)
             await db.commit()
@@ -450,7 +443,7 @@ class CentralizedService:
             )
 
         self.model_version += 1
-        await self._persist_to_db()
+        await self._persist_to_db(client_count=batch_clients)
 
         self._rounds_completed += 1
         logger.info(

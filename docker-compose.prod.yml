@@ -1,4 +1,4 @@
-# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ╔════════════════════════════════════════════════════════════════════════════╗
 # ║  PRODUCTION                                                                ║
 # ║                                                                            ║
 # ║  Pulls the pre-built image from GHCR and connects to Amazon RDS.           ║
@@ -13,10 +13,7 @@
 # ║                                                                            ║
 # ║  A one-shot `seed` service bootstraps the RDS database before the server   ║
 # ║  starts (creates schema + seeds backbones + catalogue when empty).         ║
-# ║  To force re-seed later:                                                   ║
-# ║    docker compose -f docker-compose.prod.yml run --rm seed \               ║
-# ║        python -m app.db.seeding --force                                    ║
-# ╚══════════════════════════════════════════════════════════════════════════════╝
+# ╚════════════════════════════════════════════════════════════════════════════╝
 
 services:
 
@@ -44,6 +41,7 @@ services:
       UVICORN_WORKERS: ${UVICORN_WORKERS:-1}
       FEDERATED_CLIENTS_PER_ROUND: ${FEDERATED_CLIENTS_PER_ROUND:-2}
       CENTRALIZED_CLIENTS_PER_ROUND: ${CENTRALIZED_CLIENTS_PER_ROUND:-2}
+      MAX_TUPLE_POOL_SIZE: ${MAX_TUPLE_POOL_SIZE:-2000}
     ports:
       - "8000:8000"
     healthcheck:

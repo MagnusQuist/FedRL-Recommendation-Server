@@ -28,9 +28,10 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 import numpy as np
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db import AsyncSessionLocal
 from app.db.models.federated import FederatedBackboneVersion
 from app.logger import logger
 
@@ -53,13 +54,80 @@ class QueuedUpload:
 
 
 # ---------------------------------------------------------------------------
+# Pure CPU-bound helpers (safe to run in a worker thread)
+# ---------------------------------------------------------------------------
+def _fedavg_and_serialize(
+    eligible: list[QueuedUpload], n_total: int
+) -> str:
+    """
+    Execute FedAvg over ``eligible`` uploads and return the gzip+base64 blob
+    suitable for direct insertion into ``FederatedBackboneVersion.weights_blob``.
+    """
+    aggregated: dict[str, np.ndarray] = {}
+    param_keys = list(eligible[0].weights.keys())
+
+    for key in param_keys:
+        aggregated[key] = sum(
+            (u.interaction_count / n_total) * u.weights[key]
+            for u in eligible
+        )
+
+    weights_json = {k: v.tolist() for k, v in aggregated.items()}
+    compressed = gzip.compress(json.dumps(weights_json).encode("utf-8"))
+    return base64.b64encode(compressed).decode("utf-8")
+
+
+# ---------------------------------------------------------------------------
 # Aggregator (singleton, held in app state)
 # ---------------------------------------------------------------------------
 class FLAggregator:
     def __init__(self) -> None:
         self._queue: dict[str, QueuedUpload] = {}
         self._rounds_completed: int = 0
+        # Cached latest persisted version. Updated on startup via
+        # ``try_load_persisted_state`` and after every successful FedAvg round.
+        self.model_version: int = 0
         self._lock = asyncio.Lock()
+
+    # ── Initialisation ──────────────────────────────────────────────────────
+
+    async def try_load_persisted_state(self) -> bool:
+        """
+        Returns True if any persisted state was found.
+        """
+        try:
+            async with AsyncSessionLocal() as db:
+                latest_version = (
+                    await db.execute(select(func.max(FederatedBackboneVersion.version)))
+                ).scalar()
+
+                completed_rounds = (
+                    await db.execute(
+                        select(func.count(FederatedBackboneVersion.id)).where(
+                            FederatedBackboneVersion.client_count > 0
+                        )
+                    )
+                ).scalar() or 0
+
+            if latest_version is None:
+                logger.info("FL aggregator: no persisted state found.")
+                return False
+
+            self.model_version = int(latest_version)
+            self._rounds_completed = int(completed_rounds)
+
+            logger.info(
+                "FL aggregator state restored: version=%d rounds_completed=%d",
+                self.model_version,
+                self._rounds_completed,
+            )
+            return True
+
+        except Exception:
+            logger.exception(
+                "Failed to load persisted FL aggregator state — starting fresh."
+            )
+            return False
 
     # ── Public API ──────────────────────────────────────────────────────────
 
@@ -196,18 +264,10 @@ class FLAggregator:
                 sorted(base_versions),
             )
 
-        aggregated: dict[str, np.ndarray] = {}
-        param_keys = list(eligible[0].weights.keys())
-
-        for key in param_keys:
-            aggregated[key] = sum(
-                (u.interaction_count / n_total) * u.weights[key]
-                for u in eligible
-            )
-
-        weights_json = {k: v.tolist() for k, v in aggregated.items()}
-        compressed = gzip.compress(json.dumps(weights_json).encode("utf-8"))
-        blob = base64.b64encode(compressed).decode("utf-8")
+        # Offload the CPU-bound reduce + gzip + base64 to a worker thread,
+        # backbone retraining in ``asyncio.to_thread``. Keeps the API event
+        # loop responsive when a round is triggered.
+        blob = await asyncio.to_thread(_fedavg_and_serialize, eligible, n_total)
 
         next_version = await self._next_version(db)
 
@@ -222,6 +282,7 @@ class FLAggregator:
         await db.commit()
         await db.refresh(new_backbone)
 
+        self.model_version = new_backbone.version
         self._rounds_completed += 1
         logger.info(
             "FedAvg round complete — version=%d clients=%d interactions=%d rounds_completed=%d",
@@ -236,9 +297,6 @@ class FLAggregator:
 
 def decode_backbone_blob(blob: str) -> dict[str, list]:
     logger.info("Decoding backbone weights")
-    if not isinstance(blob, str):
-        raise ValueError("backbone_weights must be a base64-encoded string")
-
     try:
         compressed_bytes = base64.b64decode(blob)
     except Exception as e:
