@@ -15,6 +15,7 @@ __pycache__
 build/
 dist/
 .eggs/
+pip-wheel-metadata/
 
 .venv/
 venv/
@@ -23,16 +24,25 @@ env/
 .pytest_cache
 .ruff_cache
 .mypy_cache
+.tox
 .coverage
 coverage.xml
 htmlcov/
+**/tests/
+test_*.py
+*_test.py
 
 .vscode
 .idea
 .cursor
+.cursorignore
+.cursorrules
+AGENTS.md
 
 *.md
 docker-compose*.yml
+Dockerfile.*
+!Dockerfile.pretrain
 
 .DS_Store
 Thumbs.db
@@ -40,9 +50,16 @@ Thumbs.db
 *.log
 nohup.out
 *.pid
+tmp/
+temp/
+*.tmp
 
 *.sqlite
 *.sqlite3
 *.db
 
+*.ipynb
 .ipynb_checkpoints/
+
+# Past training runs — code is in pretrain/, artifacts are not needed in the image.
+pretrain/training_data/

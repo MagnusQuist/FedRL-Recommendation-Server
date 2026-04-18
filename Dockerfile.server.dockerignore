@@ -1,0 +1,78 @@
+# VCS
+.git
+.github
+.gitignore
+.gitattributes
+
+# Secrets & local env
+.env
+.env.*
+!.env.example
+
+# Python bytecode and build artifacts
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+build/
+dist/
+.eggs/
+pip-wheel-metadata/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Test, lint and type-check caches
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.tox
+.coverage
+coverage.xml
+htmlcov/
+**/tests/
+test_*.py
+*_test.py
+
+# Editor / IDE / agent metadata
+.vscode
+.idea
+.cursor
+.cursorignore
+.cursorrules
+AGENTS.md
+
+# Docs and compose
+*.md
+docker-compose*.yml
+Dockerfile.*
+!Dockerfile.server
+
+# OS trash
+.DS_Store
+Thumbs.db
+
+# Logs and scratch
+*.log
+nohup.out
+*.pid
+tmp/
+temp/
+*.tmp
+
+# Local DBs
+*.sqlite
+*.sqlite3
+*.db
+
+# Notebooks
+*.ipynb
+.ipynb_checkpoints/
+
+# Pretrain code, experiments, and outputs — not needed by the server image.
+# The seed job uses only the pretrained .npz at
+# app/db/seeding/data/pretrained/, which is outside this tree.
+pretrain/
