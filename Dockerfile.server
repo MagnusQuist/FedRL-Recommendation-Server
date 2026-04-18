@@ -10,7 +10,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY app/requirements.txt ./requirements.txt
 RUN pip install --upgrade pip \
-    && pip install --no-cache-dir --prefix=/install -r requirements.txt
+    && pip install --no-cache-dir --prefix=/install \
+         --extra-index-url https://download.pytorch.org/whl/cpu \
+         "torch==2.3.1+cpu" \
+         -r requirements.txt
 
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
@@ -19,18 +22,16 @@ FROM python:3.11-slim AS runtime
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq-dev \
+    libpq5 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /install /usr/local
-
 COPY . .
 
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
 USER appuser
 
 ENV UVICORN_WORKERS=1
-
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
