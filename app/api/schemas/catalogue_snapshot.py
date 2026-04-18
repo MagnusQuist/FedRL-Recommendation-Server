@@ -15,7 +15,7 @@ class CatalogueSnapshotResponse(BaseModel):
     food_item_categories: dict[int, list[int]] = Field(default_factory=dict)
     substitution_group_items: dict[int, list[int]] = Field(default_factory=dict)
 
-from .food_item import FoodItemRead
-from .category import CategoryRead
+from .category import CategoryRead # noqa: E402
+from .food_item import FoodItemRead # noqa: E402
 
 CatalogueSnapshotResponse.model_rebuild()

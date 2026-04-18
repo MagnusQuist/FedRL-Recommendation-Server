@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 
 LOGGER_NAME = "FedRL | Server"
@@ -9,7 +10,9 @@ if not logger.handlers:
     logger.setLevel(logging.INFO)
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
+        logging.Formatter(
+            f"%(asctime)s %(levelname)s [%(name)s -> Worker pid: {os.getpid()}] %(message)s"
+        )
     )
     logger.addHandler(handler)
     logger.propagate = False

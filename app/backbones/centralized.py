@@ -3,10 +3,21 @@ Centralized Training Service
 =============================
 Manages a centralized backbone + global heads for the centralized experiment arm.
 
+Design decisions reflected here:
 - Receives raw interaction tuples from centralized-mode clients.
-- Retrains the backbone on the accumulated tuple pool.
-- Applies Bayesian online updates to global shared heads (item, price, nudge).
-- Persists all state to the database so the server can restart without loss.
+- Uploads are buffered in memory, keyed by ``client_id``. Multiple uploads
+  from the same client before a round triggers append to that client's
+  tuple buffer but do not increase the unique-client count.
+- A training round runs when exactly ``CENTRALIZED_CLIENTS_PER_ROUND``
+  unique clients have uploaded — matching the FL aggregator's strict
+  batch semantics so the federated and centralized arms train on the
+  same number of client contributions per round (fair experimental
+  comparison).
+- On round trigger: merge the buffered tuples into the persistent pool
+  (bounded by ``MAX_TUPLE_POOL_SIZE``), retrain the backbone on the full
+  pool, apply Bayesian online updates to the global item/price/nudge
+  heads for each tuple from the round, bump ``model_version``, and
+  persist to PostgreSQL.
 """
 
 from __future__ import annotations
@@ -15,7 +26,9 @@ import asyncio
 import base64
 import gzip
 import json
+import os
 import random
+import time
 from collections import OrderedDict
 from typing import Any
 
@@ -23,19 +36,21 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.db import AsyncSessionLocal
 from app.db.models.centralized import CentralizedModelVersion
 from app.logger import logger
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Configuration — overridable via environment variables
 # ---------------------------------------------------------------------------
+CLIENTS_PER_ROUND = int(os.getenv("CENTRALIZED_CLIENTS_PER_ROUND", "2"))
+MAX_TUPLE_POOL_SIZE = int(os.getenv("MAX_TUPLE_POOL_SIZE", "2000"))
+
 RETRAIN_LR = 1e-3
 RETRAIN_EPOCHS = 3
 RETRAIN_BATCH_SIZE = 32
-MAX_TUPLE_POOL_SIZE = 2000
 CTX_PRICE_DELTA = 2  # index 2 in the 16-dim context vector
 
 NUDGE_TYPES = ["N1", "N2", "N3", "N4"]
@@ -262,29 +277,21 @@ class CentralizedService:
         self.price_head = TSPriceHead()
         self.nudge_head = TSNudgeHead()
 
-        # Tuple pool (bounded ring buffer via list + trim)
+        # Persistent tuple pool (bounded ring buffer via list + trim).
+        # Survives restarts via centralized_model_versions.
         self._tuple_pool: list[dict] = []
+
+        # Per-round client batch, in memory only (lost on restart, same as
+        # the FL aggregator queue). A round triggers when exactly
+        # ``CLIENTS_PER_ROUND`` unique clients have uploaded.
+        self._pending_clients: set[str] = set()
+        self._pending_tuples: list[dict] = []
 
         # Versioning
         self.model_version: int = 0
+        self._rounds_completed: int = 0
 
     # ── Initialisation ─────────────────────────────────────────────────────
-
-    def init_from_pretrained_weights(self, weights: dict[str, np.ndarray], version: int = 0):
-        """
-        Load backbone weights from the same pretrained checkpoint used by the
-        federated arm.  `weights` is a dict of numpy arrays keyed by
-        backbone parameter name (e.g. ``backbone.0.weight``).
-        """
-        sd = {
-            k: torch.tensor(v if isinstance(v, np.ndarray) else np.array(v, dtype=np.float32),
-                            dtype=torch.float32)
-            for k, v in weights.items()
-        }
-        self.backbone.load_state_dict(sd)
-        self.backbone.eval()
-        self.model_version = version
-        logger.info("Centralized backbone initialised from pretrained weights (version=%d).", version)
 
     async def try_load_persisted_state(self) -> bool:
         """
@@ -299,6 +306,14 @@ class CentralizedService:
                     .limit(1)
                 )
                 row = result.scalar_one_or_none()
+
+                completed_rounds = (
+                    await db.execute(
+                        select(func.count(CentralizedModelVersion.id)).where(
+                            CentralizedModelVersion.client_count > 0
+                        )
+                    )
+                ).scalar() or 0
 
             if row is None:
                 return False
@@ -325,8 +340,8 @@ class CentralizedService:
 
             self.model_version = row.version
             logger.info(
-                "Centralized state restored from DB: version=%d, tuples=%d",
-                self.model_version, len(self._tuple_pool),
+                "Centralized state restored from DB: version=%d, tuples=%d, rounds_completed=%d",
+                self.model_version, len(self._tuple_pool), completed_rounds,
             )
             return True
 
@@ -334,7 +349,7 @@ class CentralizedService:
             logger.exception("Failed to load persisted centralized state — will re-initialise.")
             return False
 
-    async def _persist_to_db(self):
+    async def _persist_to_db(self, client_count: int, training_time_seconds: float) -> None:
         """Insert a new CentralizedModelVersion row capturing the full current state."""
         backbone_blob = _encode(_backbone_to_serialisable(self.backbone))
         rp_blob = _encode({k: v.tolist() for k, v in self.reward_predictor.state_dict().items()})
@@ -352,50 +367,107 @@ class CentralizedService:
                 price_head_blob=price_blob,
                 nudge_head_blob=nudge_blob,
                 tuple_pool_blob=pool_blob,
+                client_count=client_count,
+                training_time_seconds=training_time_seconds,
             )
             db.add(row)
             await db.commit()
 
     # ── Core processing ────────────────────────────────────────────────────
 
-    async def process_interactions(self, client_id: str, algorithm: str,
-                                   count: int, data: str) -> int:
+    async def process_interactions(
+        self, client_id: str, count: int, data: str
+    ) -> tuple[int, bool, int]:
         """
-        Decode a batch of interaction tuples, retrain the backbone, update
-        global heads, bump model_version, and persist to the database.
+        Buffer a client's interaction tuples. When exactly
+        ``CLIENTS_PER_ROUND`` unique clients have uploaded, run a training
+        round (retrain backbone + update heads + persist + bump version).
 
-        Returns the new model_version.
+        Returns ``(model_version, round_triggered, queued_client_count)``.
+        ``model_version`` reflects the latest persisted model — it will only
+        change when ``round_triggered`` is ``True``.
         """
         tuples = decode_tuples(data)
-        logger.info(
-            "Centralized: received %d tuples from client='%s' (algorithm=%s)",
-            len(tuples), client_id, algorithm,
-        )
 
         async with self._lock:
-            # Append to pool, trim to window
-            self._tuple_pool.extend(tuples)
-            if len(self._tuple_pool) > MAX_TUPLE_POOL_SIZE:
-                self._tuple_pool = self._tuple_pool[-MAX_TUPLE_POOL_SIZE:]
+            self._pending_clients.add(client_id)
+            self._pending_tuples.extend(tuples)
 
-            # Retrain backbone on the pool
-            loss = retrain_backbone(self.backbone, self.reward_predictor, self._tuple_pool)
-            logger.info("Centralized backbone retrained: loss=%.6f, pool_size=%d",
-                        loss, len(self._tuple_pool))
+            queued = len(self._pending_clients)
+            logger.info(
+                "Centralized: buffered %d tuples from '%s' — %d/%d clients ready "
+                "(round_buffered_tuples=%d)",
+                len(tuples),
+                client_id,
+                queued,
+                CLIENTS_PER_ROUND,
+                len(self._pending_tuples),
+            )
 
-            # Update global heads with each tuple in order
-            for t in tuples:
-                apply_tuple_to_heads(self.backbone, self.item_head,
-                                     self.price_head, self.nudge_head, t)
+            triggered = queued == CLIENTS_PER_ROUND
+            if triggered:
+                await self._run_training_round()
 
-            # Bump version
-            self.model_version += 1
+            return self.model_version, triggered, len(self._pending_clients)
 
-            # Persist to DB
-            await self._persist_to_db()
-            logger.info("Centralized model updated to version=%d", self.model_version)
+    async def _run_training_round(self) -> None:
+        """
+        Merge the round's buffered tuples into the persistent pool, retrain
+        the backbone on the full pool, apply head updates for the round's
+        tuples, bump ``model_version``, persist, and clear the round buffer.
 
-            return self.model_version
+        Must be called with ``self._lock`` held.
+        """
+        batch_tuples = self._pending_tuples
+        batch_clients = len(self._pending_clients)
+
+        if not batch_tuples:
+            logger.warning(
+                "Centralized training round triggered with empty tuple buffer "
+                "(clients=%d) — skipping retrain.",
+                batch_clients,
+            )
+            self._pending_clients.clear()
+            self._pending_tuples = []
+            return
+
+        self._tuple_pool.extend(batch_tuples)
+        if len(self._tuple_pool) > MAX_TUPLE_POOL_SIZE:
+            self._tuple_pool = self._tuple_pool[-MAX_TUPLE_POOL_SIZE:]
+
+        train_start = time.perf_counter()
+        loss = await asyncio.to_thread(
+            retrain_backbone, self.backbone, self.reward_predictor, self._tuple_pool
+        )
+
+        for t in batch_tuples:
+            apply_tuple_to_heads(
+                self.backbone, self.item_head, self.price_head, self.nudge_head, t
+            )
+        training_time_seconds = time.perf_counter() - train_start
+
+        self.model_version += 1
+        await self._persist_to_db(
+            client_count=batch_clients,
+            training_time_seconds=training_time_seconds,
+        )
+
+        self._rounds_completed += 1
+        logger.info(
+            "Centralized training round complete — version=%d clients=%d "
+            "round_tuples=%d pool_size=%d loss=%.6f training_time=%.3fs "
+            "rounds_completed=%d",
+            self.model_version,
+            batch_clients,
+            len(batch_tuples),
+            len(self._tuple_pool),
+            loss,
+            training_time_seconds,
+            self._rounds_completed,
+        )
+
+        self._pending_clients.clear()
+        self._pending_tuples = []
 
     # ── Model serialisation for GET endpoint ───────────────────────────────
 
@@ -405,7 +477,7 @@ class CentralizedService:
         """
         backbone_dict = _backbone_to_serialisable(self.backbone)
         return {
-            "model_version": self.model_version,
+            "version": self.model_version,
             "backbone_weights": _encode(backbone_dict),
             "head_weights": {
                 "item": _encode(self.item_head.state_dict()),

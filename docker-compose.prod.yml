@@ -1,0 +1,52 @@
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║  PRODUCTION                                                                ║
+# ║                                                                            ║
+# ║  Pulls the pre-built image from GHCR and connects to Amazon RDS.           ║
+# ║  No local Postgres, no bind mounts, no build step.                         ║
+# ║                                                                            ║
+# ║  Required env vars (set in .env or export before running):                 ║
+# ║    DATABASE_URL   — RDS async connection string                            ║
+# ║    SERVER_IMAGE   — (optional) override the GHCR image tag                 ║
+# ║                                                                            ║
+# ║  Usage:                                                                    ║
+# ║    docker compose -f docker-compose.prod.yml up -d                         ║
+# ║                                                                            ║
+# ║  A one-shot `seed` service bootstraps the RDS database before the server   ║
+# ║  starts (creates schema + seeds backbones + catalogue when empty).         ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+
+services:
+
+  # ── One-shot DB bootstrap ───────────────────────────────────────────────────
+  seed:
+    image: ${SERVER_IMAGE:-ghcr.io/OWNER/fedrl-recommendation-server:latest}
+    container_name: fedrl_seed
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL to the RDS connection string}
+    command: ["python", "-m", "app.db.seeding"]
+    restart: "no"
+
+  # ── FastAPI server ──────────────────────────────────────────────────────────
+  server:
+    image: ${SERVER_IMAGE:-ghcr.io/OWNER/fedrl-recommendation-server:latest}
+    container_name: fedrl_server
+    restart: unless-stopped
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL to the RDS connection string}
+      SQL_ECHO: "false"
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-*}
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-1}
+      FEDERATED_CLIENTS_PER_ROUND: ${FEDERATED_CLIENTS_PER_ROUND:-2}
+      CENTRALIZED_CLIENTS_PER_ROUND: ${CENTRALIZED_CLIENTS_PER_ROUND:-2}
+      MAX_TUPLE_POOL_SIZE: ${MAX_TUPLE_POOL_SIZE:-2000}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

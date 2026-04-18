@@ -36,12 +36,11 @@ from torch.utils.data import DataLoader, TensorDataset
 from sqlalchemy import select, delete
 
 from app.db import AsyncSessionLocal
-from app.db.models.backbone import GlobalBackboneVersion
+from app.db.models.federated import FederatedBackboneVersion
 from app.db.models.food_item import FoodItem
 from app.db.models.food_item_category import FoodItemCategory
 from app.db.models.substitution_group_item import SubstitutionGroupItem
-from app.db.seed_backbone import (
-    FEDERATED_ALGORITHM,
+from app.db.seeding.seed_backbone import (
     INITIAL_VERSION,
     serialise_weights,
 )
@@ -200,18 +199,15 @@ async def _save_backbone(weights: dict[str, np.ndarray], dry_run: bool) -> None:
     blob = serialise_weights(weights)
 
     async with AsyncSessionLocal() as db:
-        # Remove existing version 1 if present
         await db.execute(
-            delete(GlobalBackboneVersion).where(
-                GlobalBackboneVersion.algorithm == FEDERATED_ALGORITHM,
-                GlobalBackboneVersion.version == INITIAL_VERSION,
+            delete(FederatedBackboneVersion).where(
+                FederatedBackboneVersion.version == INITIAL_VERSION,
             )
         )
 
-        backbone = GlobalBackboneVersion(
+        backbone = FederatedBackboneVersion(
             version=INITIAL_VERSION,
             weights_blob=blob,
-            algorithm=FEDERATED_ALGORITHM,
             client_count=0,
             total_interactions=0,
         )
@@ -219,9 +215,8 @@ async def _save_backbone(weights: dict[str, np.ndarray], dry_run: bool) -> None:
         await db.commit()
 
     logger.info(
-        "Pre-trained backbone persisted: version=%d, algorithm='%s'.",
+        "Pre-trained backbone persisted: version=%d.",
         INITIAL_VERSION,
-        FEDERATED_ALGORITHM,
     )
 
 

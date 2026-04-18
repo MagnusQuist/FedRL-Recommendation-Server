@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Integer, Text
+from sqlalchemy import DateTime, Float, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -37,11 +37,23 @@ class CentralizedModelVersion(Base):
         Text, nullable=False,
         comment="gzip-compressed, base64-encoded JSON of the interaction tuple pool.",
     )
+    client_count: Mapped[int] = mapped_column(
+        Integer, nullable=False,
+        comment="Number of clients whose uploads contributed to this round.",
+    )
+    training_time_seconds: Mapped[float | None] = mapped_column(
+        Float, nullable=True,
+        comment="Wall-clock seconds spent retraining backbone and updating heads for this round. NULL for the seeded v1 row.",
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (
+        UniqueConstraint("version"),
     )
 
     def __repr__(self) -> str:

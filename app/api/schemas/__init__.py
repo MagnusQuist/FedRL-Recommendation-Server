@@ -1,7 +1,7 @@
-from .backbone import (
+from .federated import (
     BackboneDownload,
     BackboneUpload,
-    GlobalBackboneVersionRead,
+    FederatedBackboneVersionRead,
     RoundStatus,
     UploadAck,
 )
@@ -28,7 +28,7 @@ from .substitution_group_item import SubstitutionGroupItemCreate, SubstitutionGr
 __all__ = [
     "BackboneDownload",
     "BackboneUpload",
-    "GlobalBackboneVersionRead",
+    "FederatedBackboneVersionRead",
     "RoundStatus",
     "UploadAck",
     "SubstitutionGroupItemCreate",

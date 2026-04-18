@@ -8,5 +8,8 @@ This package is designed to be the single entrypoint for application code that
 needs API schemas or routers.
 """
 
-# Export subpackages at the package level for convenience.
-from app.api import routers, schemas
+# Re-export subpackages for convenience (explicit aliases satisfy re-export lint rules).
+from . import routers as routers
+from . import schemas as schemas
+
+__all__ = ["routers", "schemas"]

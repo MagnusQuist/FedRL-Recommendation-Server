@@ -30,6 +30,7 @@ class SubstitutionGroupSummary(ORMModel):
 class SubstitutionGroupDetail(SubstitutionGroupRead):
     food_items: list["FoodItemSummary"] = Field(default_factory=list)
 
-from .food_item import FoodItemSummary
+
+from .food_item import FoodItemSummary  # noqa: E402
 
 SubstitutionGroupDetail.model_rebuild()

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from app.db import Base
 
 from sqlalchemy import (
@@ -10,6 +12,13 @@ from sqlalchemy import (
     Index,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+if TYPE_CHECKING:
+    from app.db.models.category import Category
+    from app.db.models.food_item_category import FoodItemCategory
+    from app.db.models.substitution_group import SubstitutionGroup
+    from app.db.models.substitution_group_item import SubstitutionGroupItem
+
 
 class FoodItem(Base):
     __tablename__ = "food_items"

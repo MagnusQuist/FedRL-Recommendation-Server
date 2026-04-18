@@ -1,3 +1,5 @@
+"""Load catalogue CSV/JSON from ``data/``, wipe related tables, bulk insert, fix sequences."""
+
 from __future__ import annotations
 
 import asyncio
@@ -20,18 +22,11 @@ TABLE_NAMES = [
 ]
 
 
-def _find_project_root(start: Path) -> Path:
-    for candidate in [start, *start.parents]:
-        if (candidate / "data").exists():
-            return candidate
-    raise FileNotFoundError("Could not find project root containing a /data folder.")
-
-
-def _get_data_dir() -> Path:
-    return _find_project_root(Path(__file__).resolve()).joinpath("data")
+DATA_DIR = Path(__file__).resolve().parent / "data"
 
 
 def _get_database_url() -> str:
+    """``DATABASE_URL`` (async SQLAlchemy URL)."""
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
         raise RuntimeError(
@@ -43,6 +38,7 @@ def _get_database_url() -> str:
 
 
 def _clean_value(value: Any) -> Any:
+    """Strip strings; map empty string to None."""
     if isinstance(value, str):
         value = value.strip()
         if value == "":
@@ -92,6 +88,7 @@ def _to_str(value: Any) -> str | None:
 
 
 def _read_csv_rows(path: Path) -> list[dict[str, Any]]:
+    """Parse CSV with sniffer; strip header keys and cell values."""
     with path.open("r", encoding="utf-8-sig", newline="") as f:
         sample = f.read(4096)
         f.seek(0)
@@ -115,6 +112,7 @@ def _read_csv_rows(path: Path) -> list[dict[str, Any]]:
 
 
 def _read_json_rows(path: Path) -> list[dict[str, Any]]:
+    """Top-level list or dict with ``items``/``products``/… key holding a list."""
     with path.open("r", encoding="utf-8-sig") as f:
         payload = json.load(f)
 
@@ -218,6 +216,7 @@ def _load_food_items(data_dir: Path) -> list[dict[str, Any]]:
 
 
 async def _reflect_tables(engine: AsyncEngine) -> MetaData:
+    """Reflect ``TABLE_NAMES`` for raw insert/delete."""
     metadata = MetaData()
 
     async with engine.begin() as conn:
@@ -229,6 +228,7 @@ async def _reflect_tables(engine: AsyncEngine) -> MetaData:
 
 
 async def _reset_sequence(conn, table_name: str, pk_column: str) -> None:
+    """Align PostgreSQL serial after explicit PK inserts."""
     await conn.execute(
         text(
             """
@@ -247,7 +247,8 @@ async def _reset_sequence(conn, table_name: str, pk_column: str) -> None:
 
 
 async def seed_catalogue() -> None:
-    data_dir = _get_data_dir()
+    """Replace catalogue tables from disk files (FK-safe order, then ``setval``)."""
+    data_dir = DATA_DIR
     database_url = _get_database_url()
 
     categories = _load_categories(data_dir)
@@ -310,3 +311,4 @@ async def seed_catalogue() -> None:
 
 if __name__ == "__main__":
     asyncio.run(seed_catalogue())
+

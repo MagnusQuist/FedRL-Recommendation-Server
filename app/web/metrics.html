@@ -42,11 +42,6 @@
             <div id="queued-clients" class="metric-helper mono muted"></div>
           </div>
           <div class="metric">
-            <div class="metric-label">Queue algo breakdown</div>
-            <div id="queued-algo" class="metric-value">–</div>
-            <div class="metric-helper">Uploads per algorithm</div>
-          </div>
-          <div class="metric">
             <div class="metric-label">Interactions in queue</div>
             <div id="queued-interactions" class="metric-value">–</div>
             <div class="metric-helper">Total / average n<sub>k</sub></div>
@@ -62,14 +57,9 @@
             <div class="metric-helper">Since server start</div>
           </div>
           <div class="metric">
-            <div class="metric-label">Min clients / round</div>
+            <div class="metric-label">Clients per round</div>
             <div id="min-clients" class="metric-value">–</div>
-            <div class="metric-helper">From <span class="mono">FL_MIN_CLIENTS_PER_ROUND</span></div>
-          </div>
-          <div class="metric">
-            <div class="metric-label">Round timeout</div>
-            <div id="round-timeout" class="metric-value">–</div>
-            <div id="round-time-remaining" class="metric-helper"></div>
+            <div class="metric-helper">From <span class="mono">FL_MIN_CLIENTS_PER_ROUND</span> (exact)</div>
           </div>
         </div>
       </section>
@@ -86,7 +76,6 @@
             <div class="metric">
               <div class="metric-label">Current version</div>
               <div id="bb-version" class="metric-value">–</div>
-              <div id="bb-algorithm" class="metric-helper mono"></div>
             </div>
             <div class="metric">
               <div class="metric-label">Clients in last round</div>
@@ -172,13 +161,6 @@
         document.getElementById("queued-clients").textContent =
           clientIds.length ? clientIds.join(", ") : "No clients queued.";
 
-        const algoCounts = agg.queued_algorithm_counts || {};
-        const algoText = Object.entries(algoCounts)
-          .map(([k, v]) => `${k}: ${v}`)
-          .join(" · ");
-        document.getElementById("queued-algo").textContent =
-          algoText || "–";
-
         const totalInteractions = agg.queued_total_interactions ?? null;
         const avgInteractions = agg.queued_avg_interactions ?? null;
         document.getElementById("queued-interactions").textContent =
@@ -194,19 +176,7 @@
         document.getElementById("rounds-completed").textContent =
           agg.rounds_completed ?? "0";
         document.getElementById("min-clients").textContent =
-          agg.min_clients_per_round ?? "–";
-        document.getElementById("round-timeout").textContent =
-          (agg.round_timeout_seconds ?? "–") + (agg.round_timeout_seconds ? "s" : "");
-
-        const remaining = agg.round_seconds_until_timeout;
-        const elapsed = agg.round_elapsed_seconds;
-        if (remaining == null || elapsed == null) {
-          document.getElementById("round-time-remaining").textContent =
-            "No round in progress.";
-        } else {
-          document.getElementById("round-time-remaining").textContent =
-            fmtSeconds(elapsed) + " elapsed • " + fmtSeconds(remaining) + " remaining";
-        }
+          agg.clients_per_round ?? "–";
 
         if (!bb) {
           document.getElementById("backbone-present").style.display = "none";
@@ -216,8 +186,6 @@
           document.getElementById("backbone-empty").style.display = "none";
 
           document.getElementById("bb-version").textContent = bb.version;
-          document.getElementById("bb-algorithm").textContent =
-            "algorithm=" + (bb.algorithm || "–");
           document.getElementById("bb-clients").textContent =
             bb.client_count ?? "–";
           document.getElementById("bb-interactions").textContent =

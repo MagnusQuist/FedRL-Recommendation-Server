@@ -1,0 +1,88 @@
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║  DEVELOPMENT ONLY                                                         ║
+# ║                                                                           ║
+# ║  Runs a local PostgreSQL container and bind-mounts the source for live    ║
+# ║  reload.  Do NOT use this in production — see docker-compose.prod.yml.    ║
+# ║                                                                           ║
+# ║  Usage:                                                                   ║
+# ║    docker compose -f docker-compose.dev.yml up                            ║
+# ║                                                                           ║
+# ║  A one-shot `seed` service bootstraps the database before the server      ║
+# ║  starts (creates schema + seeds backbones + catalogue when empty).        ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:17.6-alpine
+    container_name: fedrl_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fedrl}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fedrl}
+      POSTGRES_DB: ${POSTGRES_DB:-fedrl}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fedrl} -d ${POSTGRES_DB:-fedrl}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - fedrl_network
+
+  # ── One-shot DB bootstrap ───────────────────────────────────────────────────
+  seed:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+      target: runtime
+    container_name: fedrl_seed
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-fedrl}:${POSTGRES_PASSWORD:-fedrl}@postgres:5432/${POSTGRES_DB:-fedrl}
+    command: ["python", "-m", "app.db.seeding"]
+    restart: "no"
+    networks:
+      - fedrl_network
+    volumes:
+      - .:/app
+
+  # ── FastAPI server ──────────────────────────────────────────────────────────
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+      target: runtime
+    container_name: fedrl_server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-fedrl}:${POSTGRES_PASSWORD:-fedrl}@postgres:5432/${POSTGRES_DB:-fedrl}
+      SQL_ECHO: ${SQL_ECHO:-false}
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-1}
+      FEDERATED_CLIENTS_PER_ROUND: ${FEDERATED_CLIENTS_PER_ROUND:-2}
+      CENTRALIZED_CLIENTS_PER_ROUND: ${CENTRALIZED_CLIENTS_PER_ROUND:-2}
+      MAX_TUPLE_POOL_SIZE: ${MAX_TUPLE_POOL_SIZE:-2000}
+    ports:
+      - "8000:8000"
+    networks:
+      - fedrl_network
+    volumes:
+      - .:/app
+
+volumes:
+  postgres_data:
+
+networks:
+  fedrl_network:
+    driver: bridge

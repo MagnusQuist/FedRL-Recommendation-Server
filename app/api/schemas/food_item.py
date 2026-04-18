@@ -115,7 +115,8 @@ class FoodItemDetail(FoodItemRead):
     categories: list["CategorySummary"] = Field(default_factory=list)
     substitution_groups: list["SubstitutionGroupSummary"] = Field(default_factory=list)
 
-from .category import CategorySummary
-from .substitution_group import SubstitutionGroupSummary
+
+from .category import CategorySummary  # noqa: E402
+from .substitution_group import SubstitutionGroupSummary  # noqa: E402
 
 FoodItemDetail.model_rebuild()

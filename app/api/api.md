@@ -16,13 +16,13 @@ Base URL: `localhost/api/v1/catalogue`
 | **GET**     | `/substitution_groups`         | Get all substitution groups          |
 | **GET**     | `/substitution_groups/item?item_id={id}`         | Get an item's substitution group and related items          |
 
-### Backbone
+### Federated
 
-Base URL `localhost/api/v1/backbone`
+Base URL `localhost/api/v1/federated`
 
 | Method | Endpoint       | Description                  |
 |--------|----------------|------------------------------|
 | **GET**    | `/status`         | Aggregation queue status           |
-| **GET**    | `/version`         | Global backbone version           |
-| **GET**     | `/model`         | Get current global backbone model          |
+| **GET**    | `/version`         | Federated backbone version           |
+| **GET**     | `/model`         | Get current federated backbone model          |
 | **POST**     | `/model`         | Upload backbone weights for FedAvg aggregation        |
