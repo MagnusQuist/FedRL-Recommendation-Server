@@ -1,4 +1,5 @@
-from sys import version
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.schemas.federated import BackboneDownload, BackboneUpload, RoundStatus, UploadAck
 from app.db import get_db
 from app.logger import logger
-import os
 
 router = APIRouter(prefix="/federated")
 

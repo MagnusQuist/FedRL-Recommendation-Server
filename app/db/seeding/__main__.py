@@ -19,12 +19,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from app.db.seeding.runner import bootstrap_if_empty, ensure_models, seed_all
-from app.db.seeding.seed_backbone import (
+from app.db.seeding.runner import bootstrap_if_empty, ensure_models, seed_all  # noqa: E402
+from app.db.seeding.seed_backbone import (  # noqa: E402
     seed_centralized_backbone,
     seed_federated_backbone,
 )
-from app.db.seeding.seed_catalogue import seed_catalogue
+from app.db.seeding.seed_catalogue import seed_catalogue  # noqa: E402
 
 
 async def _run(args: argparse.Namespace) -> None:

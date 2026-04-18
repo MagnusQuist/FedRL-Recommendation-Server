@@ -1,6 +1,6 @@
 """Pydantic schemas for the centralized training endpoints."""
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 
 class InteractionUpload(BaseModel):

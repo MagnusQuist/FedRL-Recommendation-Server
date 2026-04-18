@@ -1,13 +1,19 @@
 from __future__ import annotations
 
-from app.db import Base
+from typing import TYPE_CHECKING
 
+from app.db import Base
 
 from sqlalchemy import (
     Integer,
     String,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+if TYPE_CHECKING:
+    from app.db.models.food_item import FoodItem
+    from app.db.models.food_item_category import FoodItemCategory
+
 
 class Category(Base):
     __tablename__ = "categories"

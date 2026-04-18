@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from app.db import Base
+from typing import TYPE_CHECKING
 
+from app.db import Base
 
 from sqlalchemy import (
     String,
@@ -10,6 +11,10 @@ from sqlalchemy import (
     Index,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+if TYPE_CHECKING:
+    from app.db.models.category import Category
+    from app.db.models.food_item import FoodItem
 
 
 class FoodItemCategory(Base):
