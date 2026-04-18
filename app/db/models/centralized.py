@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Integer, Text, UniqueConstraint
+from sqlalchemy import DateTime, Float, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -40,6 +40,10 @@ class CentralizedModelVersion(Base):
     client_count: Mapped[int] = mapped_column(
         Integer, nullable=False,
         comment="Number of clients whose uploads contributed to this round.",
+    )
+    training_time_seconds: Mapped[float | None] = mapped_column(
+        Float, nullable=True,
+        comment="Wall-clock seconds spent retraining backbone and updating heads for this round. NULL for the seeded v1 row.",
     )
 
     created_at: Mapped[datetime] = mapped_column(

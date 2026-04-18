@@ -267,7 +267,9 @@ class FLAggregator:
         # Offload the CPU-bound reduce + gzip + base64 to a worker thread,
         # backbone retraining in ``asyncio.to_thread``. Keeps the API event
         # loop responsive when a round is triggered.
+        train_start = time.perf_counter()
         blob = await asyncio.to_thread(_fedavg_and_serialize, eligible, n_total)
+        training_time_seconds = time.perf_counter() - train_start
 
         next_version = await self._next_version(db)
 
@@ -276,6 +278,7 @@ class FLAggregator:
             weights_blob=blob,
             client_count=len(eligible),
             total_interactions=n_total,
+            training_time_seconds=training_time_seconds,
         )
         db.add(new_backbone)
         await db.flush()
@@ -285,10 +288,12 @@ class FLAggregator:
         self.model_version = new_backbone.version
         self._rounds_completed += 1
         logger.info(
-            "FedAvg round complete — version=%d clients=%d interactions=%d rounds_completed=%d",
+            "FedAvg round complete — version=%d clients=%d interactions=%d "
+            "training_time=%.3fs rounds_completed=%d",
             new_backbone.version,
             len(eligible),
             n_total,
+            training_time_seconds,
             self._rounds_completed,
         )
 

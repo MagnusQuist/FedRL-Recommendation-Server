@@ -28,6 +28,7 @@ import gzip
 import json
 import os
 import random
+import time
 from collections import OrderedDict
 from typing import Any
 
@@ -348,7 +349,7 @@ class CentralizedService:
             logger.exception("Failed to load persisted centralized state — will re-initialise.")
             return False
 
-    async def _persist_to_db(self, client_count: int):
+    async def _persist_to_db(self, client_count: int, training_time_seconds: float) -> None:
         """Insert a new CentralizedModelVersion row capturing the full current state."""
         backbone_blob = _encode(_backbone_to_serialisable(self.backbone))
         rp_blob = _encode({k: v.tolist() for k, v in self.reward_predictor.state_dict().items()})
@@ -367,6 +368,7 @@ class CentralizedService:
                 nudge_head_blob=nudge_blob,
                 tuple_pool_blob=pool_blob,
                 client_count=client_count,
+                training_time_seconds=training_time_seconds,
             )
             db.add(row)
             await db.commit()
@@ -433,6 +435,7 @@ class CentralizedService:
         if len(self._tuple_pool) > MAX_TUPLE_POOL_SIZE:
             self._tuple_pool = self._tuple_pool[-MAX_TUPLE_POOL_SIZE:]
 
+        train_start = time.perf_counter()
         loss = await asyncio.to_thread(
             retrain_backbone, self.backbone, self.reward_predictor, self._tuple_pool
         )
@@ -441,19 +444,25 @@ class CentralizedService:
             apply_tuple_to_heads(
                 self.backbone, self.item_head, self.price_head, self.nudge_head, t
             )
+        training_time_seconds = time.perf_counter() - train_start
 
         self.model_version += 1
-        await self._persist_to_db(client_count=batch_clients)
+        await self._persist_to_db(
+            client_count=batch_clients,
+            training_time_seconds=training_time_seconds,
+        )
 
         self._rounds_completed += 1
         logger.info(
             "Centralized training round complete — version=%d clients=%d "
-            "round_tuples=%d pool_size=%d loss=%.6f rounds_completed=%d",
+            "round_tuples=%d pool_size=%d loss=%.6f training_time=%.3fs "
+            "rounds_completed=%d",
             self.model_version,
             batch_clients,
             len(batch_tuples),
             len(self._tuple_pool),
             loss,
+            training_time_seconds,
             self._rounds_completed,
         )
 
