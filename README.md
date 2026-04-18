@@ -3,6 +3,9 @@
 Federated RL recommendation server for the **Nudge2Green** thesis project.
 Exposes a food catalogue REST API and training endpoints for clients running LinTS (Linear Thompson Sampling) in one of three experiment modes.
 
+### AWS Deployment
+[Guide to AWS Deployment](./aws-deployment.md)
+
 ---
 
 ## Experiment modes

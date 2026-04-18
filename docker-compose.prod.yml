@@ -19,7 +19,7 @@ services:
 
   # ── One-shot DB bootstrap ───────────────────────────────────────────────────
   seed:
-    image: ${SERVER_IMAGE:-ghcr.io/OWNER/fedrl-recommendation-server:latest}
+    image: ${SERVER_IMAGE:-ghcr.io/magnusquist/fedrl-recommendation-server:latest}
     container_name: fedrl_seed
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL to the RDS connection string}
@@ -28,7 +28,7 @@ services:
 
   # ── FastAPI server ──────────────────────────────────────────────────────────
   server:
-    image: ${SERVER_IMAGE:-ghcr.io/OWNER/fedrl-recommendation-server:latest}
+    image: ${SERVER_IMAGE:-ghcr.io/magnusquist/fedrl-recommendation-server:latest}
     container_name: fedrl_server
     restart: unless-stopped
     depends_on:
