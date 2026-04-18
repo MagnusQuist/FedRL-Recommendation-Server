@@ -1,13 +1,9 @@
-"""Seeding CLI.
+"""CLI for DB seeding (same entry points as server startup).
 
-Usage:
-    python -m app.db.seeding                   # bootstrap if the DB is empty
-    python -m app.db.seeding --force           # create tables + re-run all seeders
-    python -m app.db.seeding --catalogue-only  # re-seed only the catalogue
-    python -m app.db.seeding --backbones-only  # re-seed only the backbones
-
-The no-argument invocation mirrors what the server does on startup and is the
-recommended way to provision a fresh database.
+    python -m app.db.seeding                   # bootstrap if empty (default)
+    python -m app.db.seeding --force           # create tables + full re-seed
+    python -m app.db.seeding --catalogue-only  # catalogue only
+    python -m app.db.seeding --backbones-only  # federated + centralized backbones only
 """
 
 from __future__ import annotations
@@ -52,23 +48,21 @@ async def _run(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Create tables and seed the FedRL database.",
-    )
+    parser = argparse.ArgumentParser(description="Create tables and seed the database.")
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Create tables and re-run every seeder (full replace for the catalogue).",
+        help="Create tables and run all seeders (catalogue is fully replaced).",
     )
     parser.add_argument(
         "--catalogue-only",
         action="store_true",
-        help="Re-seed only the food catalogue.",
+        help="Seed food catalogue only.",
     )
     parser.add_argument(
         "--backbones-only",
         action="store_true",
-        help="Re-seed only the federated + centralized backbones.",
+        help="Seed federated and centralized backbone rows only.",
     )
     args = parser.parse_args()
     asyncio.run(_run(args))

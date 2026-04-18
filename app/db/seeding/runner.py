@@ -1,8 +1,4 @@
-"""Database bootstrap orchestration.
-
-High-level helpers shared by the server's startup lifecycle and the
-``python -m app.db.seeding`` CLI.
-"""
+"""Bootstrap helpers used by server startup and ``python -m app.db.seeding``."""
 
 from __future__ import annotations
 
@@ -19,10 +15,7 @@ from app.logger import logger
 
 
 async def ensure_models() -> None:
-    """Create any missing tables from the SQLAlchemy models.
-
-    Safe to call concurrently from multiple Uvicorn workers.
-    """
+    """Create missing tables from ``Base.metadata`` (safe across Uvicorn workers)."""
     import app.db.models  # noqa: F401 — register models on Base.metadata
 
     logger.info("Creating missing database tables...")
@@ -36,7 +29,7 @@ async def ensure_models() -> None:
 
 
 async def seed_all() -> None:
-    """Seed backbones + catalogue. Individual seeders are idempotent."""
+    """Run backbone seeders then catalogue (each skips if already present where applicable)."""
     logger.info("Seeding backbone weights...")
     await seed_federated_backbone()
     await seed_centralized_backbone()
@@ -46,15 +39,7 @@ async def seed_all() -> None:
 
 
 async def bootstrap_if_empty() -> bool:
-    """Create tables and seed data when the database is fresh.
-
-    Detects a fresh database via ``has_tables()`` (see ``seed_status``).
-    No-op when the schema already exists, making it safe to call on every
-    server startup.
-
-    Returns True when bootstrap ran, False when the database was already
-    initialised.
-    """
+    """If no tables yet: create schema and seed. Otherwise no-op. Returns whether bootstrap ran."""
     if await has_tables():
         logger.info("Database already initialised — skipping bootstrap.")
         return False

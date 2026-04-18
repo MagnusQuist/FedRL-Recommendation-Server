@@ -1,8 +1,4 @@
-"""Helpers for inspecting database state.
-
-Intentionally minimal — avoids importing the API layer to prevent circular
-import cycles.
-"""
+"""Lightweight DB state checks (no API imports, avoids circular deps)."""
 
 from sqlalchemy import inspect, text
 
@@ -13,11 +9,7 @@ _SENTINEL_TABLE = "categories"
 
 
 async def has_tables() -> bool:
-    """Return True if the server's schema is already present in the database.
-
-    Uses the ``categories`` table as a sentinel — if it exists we assume the
-    full schema has been created by a previous bootstrap or migration.
-    """
+    """True if ``categories`` exists (sentinel for schema present)."""
     async with engine.begin() as conn:
         return await conn.run_sync(
             lambda sync_conn: inspect(sync_conn).has_table(_SENTINEL_TABLE)
@@ -25,7 +17,7 @@ async def has_tables() -> bool:
 
 
 async def is_database_seeded() -> bool:
-    """Return True if the database already contains seed data."""
+    """True if ``categories`` has at least one row."""
     async with AsyncSessionLocal() as db:
         try:
             result = await db.execute(
