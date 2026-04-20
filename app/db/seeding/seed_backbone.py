@@ -20,7 +20,7 @@ from app.db.models.centralized import CentralizedModelVersion
 from app.db.models.federated import FederatedBackboneVersion
 from app.logger import logger
 
-INPUT_DIM = 16
+INPUT_DIM = 18
 HIDDEN_DIM = 64
 OUTPUT_DIM = 32
 INITIAL_VERSION = 1
@@ -33,7 +33,7 @@ PRETRAINED_WEIGHTS_PATH = Path(
     os.getenv("PRETRAINED_WEIGHTS_PATH", str(_DEFAULT_PRETRAINED_WEIGHTS_PATH))
 )
 
-_NUDGE_TYPES = ["N1", "N2", "N3", "N4"]
+_NUDGE_TYPES = ["N1", "N2", "N3", "N4", "N5", "N6"]
 
 
 def _random_weights() -> dict[str, np.ndarray]:

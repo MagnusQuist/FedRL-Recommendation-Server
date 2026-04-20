@@ -49,9 +49,9 @@ class BackboneWithHead(nn.Module):
         super().__init__()
         self.backbone = Backbone()
         self.head = nn.Sequential(
-            nn.Linear(OUTPUT_DIM, 16),
+            nn.Linear(OUTPUT_DIM, 18),
             nn.ReLU(),
-            nn.Linear(16, 1),
+            nn.Linear(18, 1),
             nn.Sigmoid(),
         )
 

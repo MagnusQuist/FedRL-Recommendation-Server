@@ -52,16 +52,16 @@ MAX_TUPLE_POOL_SIZE = int(os.getenv("MAX_TUPLE_POOL_SIZE", "2000"))
 RETRAIN_LR = 1e-3
 RETRAIN_EPOCHS = 3
 RETRAIN_BATCH_SIZE = 32
-CTX_PRICE_DELTA = 2  # index 2 in the 16-dim context vector
+CTX_PRICE_DELTA = 2  # index 2 in the 18-dim context vector
 
-NUDGE_TYPES = ["N1", "N2", "N3", "N4"]
+NUDGE_TYPES = ["N1", "N2", "N3", "N4", "N5", "N6"]
 
 
 # ---------------------------------------------------------------------------
 # Model architectures (exact copies of client-side models)
 # ---------------------------------------------------------------------------
 class BackboneEncoder(nn.Module):
-    def __init__(self, input_dim: int = 16, latent_dim: int = 32):
+    def __init__(self, input_dim: int = 18, latent_dim: int = 32):
         super().__init__()
         self.backbone = nn.Sequential(
             nn.Linear(input_dim, 64), nn.ReLU(),

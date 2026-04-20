@@ -80,6 +80,28 @@ services:
     volumes:
       - .:/app
 
+  # pretrain:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.pretrain
+  #   container_name: fedrl_pretrain
+  #   restart: unless-stopped
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     seed:
+  #       condition: service_completed_successfully
+  #   environment:
+  #     DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-fedrl}:${POSTGRES_PASSWORD:-fedrl}@postgres:5432/${POSTGRES_DB:-fedrl}
+  #     SQL_ECHO: ${SQL_ECHO:-false}
+  #     UVICORN_WORKERS: ${UVICORN_WORKERS:-1}
+  #   ports:
+  #     - "8010:8010"
+  #   networks:
+  #     - fedrl_network
+  #   volumes:
+  #     - .:/app
+
 volumes:
   postgres_data:
 

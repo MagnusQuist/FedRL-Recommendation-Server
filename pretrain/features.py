@@ -1,7 +1,7 @@
 """
 features.py
 ===========
-Build the 16-dimensional context vector for (original, candidate) pairs
+Build the 18-dimensional context vector for (original, candidate) pairs
 and assemble the full pre-training dataset from substitution groups.
 
 Feature layout (matching client-side convention):
@@ -20,7 +20,9 @@ Feature layout (matching client-side convention):
    12  nudge_n2
    13  nudge_n3
    14  nudge_n4
-   15  cart_size_norm (0.5 during pre-training)
+   15  nudge_n5
+   16  nudge_n6
+   17  cart_size_norm (0.5 during pre-training)
 """
 
 from __future__ import annotations
@@ -38,7 +40,7 @@ from pretrain.targets import (
 
 logger = logging.getLogger(__name__)
 
-FEATURE_DIM = 16
+FEATURE_DIM = 18
 MAX_PAIRS_PER_GROUP = 500
 
 # Category IDs from categories.csv
@@ -62,7 +64,7 @@ def build_feature_vector(
     nutrition_maxes: dict[str, float],
     cart_size_norm: float = 0.5,
 ) -> np.ndarray:
-    """Build a single 16D feature vector for an (original, candidate) pair."""
+    """Build a single 18D feature vector for an (original, candidate) pair."""
     vec = np.zeros(FEATURE_DIM, dtype=np.float32)
 
     orig_co2 = _safe(original.get("co2e_kg_pr_item_kg"))
@@ -125,9 +127,10 @@ def build_feature_vector(
     # 10: is_lower_co2_flag
     vec[10] = 1.0 if cand_co2 < orig_co2 else 0.0
 
-    # 11-14: nudge one-hot — all zeros during pre-training
-    # 15: cart_size_norm — fixed neutral value
-    vec[15] = cart_size_norm
+    # 11-16: nudge one-hot — all zeros during pre-training
+
+    # 17: cart_size_norm — fixed neutral value
+    vec[17] = cart_size_norm
 
     return vec
 
@@ -141,7 +144,7 @@ def build_dataset(
     Generate the full pre-training dataset.
 
     Returns:
-        features:  (N, 16) float32 array
+        features:  (N, 18) float32 array
         targets:   (N,)    float32 array of quality scores in [0, 1]
         group_ids: (N,)    int array — substitution group each pair came from
                    (used for stratified train/val split)
