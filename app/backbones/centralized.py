@@ -40,6 +40,7 @@ from sqlalchemy import func, select
 
 from app.db import AsyncSessionLocal
 from app.db.models.centralized import CentralizedModelVersion
+from app.db.models.training_payload_log import TrainingPayloadLog
 from app.logger import logger
 
 # ---------------------------------------------------------------------------
@@ -286,6 +287,7 @@ class CentralizedService:
         # ``CLIENTS_PER_ROUND`` unique clients have uploaded.
         self._pending_clients: set[str] = set()
         self._pending_tuples: list[dict] = []
+        self._pending_payloads: dict[str, tuple[str, int]] = {}
 
         # Versioning
         self.model_version: int = 0
@@ -349,7 +351,12 @@ class CentralizedService:
             logger.exception("Failed to load persisted centralized state — will re-initialise.")
             return False
 
-    async def _persist_to_db(self, client_count: int, training_time_seconds: float) -> None:
+    async def _persist_to_db(
+        self,
+        client_count: int,
+        training_time_seconds: float,
+        payload_uploads: list[tuple[str, str, int]],
+    ) -> None:
         """Insert a new CentralizedModelVersion row capturing the full current state."""
         backbone_blob = _encode(_backbone_to_serialisable(self.backbone))
         rp_blob = _encode({k: v.tolist() for k, v in self.reward_predictor.state_dict().items()})
@@ -371,12 +378,39 @@ class CentralizedService:
                 training_time_seconds=training_time_seconds,
             )
             db.add(row)
+            await db.flush()
+
+            for client_id, payload_blob, full_request_size_bytes in payload_uploads:
+                size_bytes = len(payload_blob.encode("utf-8"))
+                size_kb = size_bytes / 1024
+                size_mb = size_bytes / (1024 * 1024)
+                db.add(
+                    TrainingPayloadLog(
+                        client_id=client_id,
+                        payload_blob=payload_blob,
+                        payload_size_bytes=size_bytes,
+                        payload_size_kb=size_kb,
+                        payload_size_mb=size_mb,
+                        full_request_size_bytes=full_request_size_bytes,
+                        centralized_model_version_id=row.id,
+                    )
+                )
+                logger.info(
+                    "Centralized round payload logged: version=%d client_id='%s' "
+                    "payload_size=%.2f KB (%.4f MB) full_request_size=%d bytes",
+                    self.model_version,
+                    client_id,
+                    size_kb,
+                    size_mb,
+                    full_request_size_bytes,
+                )
+
             await db.commit()
 
     # ── Core processing ────────────────────────────────────────────────────
 
     async def process_interactions(
-        self, client_id: str, count: int, data: str
+        self, client_id: str, count: int, data: str, full_request_size_bytes: int
     ) -> tuple[int, bool, int]:
         """
         Buffer a client's interaction tuples. When exactly
@@ -392,6 +426,7 @@ class CentralizedService:
         async with self._lock:
             self._pending_clients.add(client_id)
             self._pending_tuples.extend(tuples)
+            self._pending_payloads[client_id] = (data, full_request_size_bytes)
 
             queued = len(self._pending_clients)
             logger.info(
@@ -450,6 +485,15 @@ class CentralizedService:
         await self._persist_to_db(
             client_count=batch_clients,
             training_time_seconds=training_time_seconds,
+            payload_uploads=[
+                (
+                    client_id,
+                    self._pending_payloads[client_id][0],
+                    self._pending_payloads[client_id][1],
+                )
+                for client_id in self._pending_clients
+                if client_id in self._pending_payloads
+            ],
         )
 
         self._rounds_completed += 1
@@ -468,6 +512,7 @@ class CentralizedService:
 
         self._pending_clients.clear()
         self._pending_tuples = []
+        self._pending_payloads = {}
 
     # ── Model serialisation for GET endpoint ───────────────────────────────
 

@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import AsyncSessionLocal
 from app.db.models.federated import FederatedBackboneVersion
+from app.db.models.training_payload_log import TrainingPayloadLog
 from app.logger import logger
 
 # ---------------------------------------------------------------------------
@@ -50,6 +51,8 @@ class QueuedUpload:
     backbone_version: int
     interaction_count: int
     weights: dict[str, np.ndarray]
+    payload_blob: str
+    full_request_size_bytes: int
     received_at: float = field(default_factory=time.monotonic)
 
 
@@ -137,6 +140,8 @@ class FLAggregator:
         backbone_version: int,
         interaction_count: int,
         weights_dict: dict[str, list],
+        payload_blob: str,
+        full_request_size_bytes: int,
         db: AsyncSession,
     ) -> tuple[bool, int]:
         """
@@ -153,6 +158,8 @@ class FLAggregator:
                 backbone_version=backbone_version,
                 interaction_count=interaction_count,
                 weights=weights,
+                payload_blob=payload_blob,
+                full_request_size_bytes=full_request_size_bytes,
             )
 
             queued = len(self._queue)
@@ -282,6 +289,32 @@ class FLAggregator:
         )
         db.add(new_backbone)
         await db.flush()
+
+        for upload in eligible:
+            size_bytes = len(upload.payload_blob.encode("utf-8"))
+            size_kb = size_bytes / 1024
+            size_mb = size_bytes / (1024 * 1024)
+            db.add(
+                TrainingPayloadLog(
+                    client_id=upload.client_id,
+                    payload_blob=upload.payload_blob,
+                    payload_size_bytes=size_bytes,
+                    payload_size_kb=size_kb,
+                    payload_size_mb=size_mb,
+                    full_request_size_bytes=upload.full_request_size_bytes,
+                    federated_model_version_id=new_backbone.id,
+                )
+            )
+            logger.info(
+                "Federated round payload logged: version=%d client_id='%s' "
+                "payload_size=%.2f KB (%.4f MB) full_request_size=%d bytes",
+                next_version,
+                upload.client_id,
+                size_kb,
+                size_mb,
+                upload.full_request_size_bytes,
+            )
+
         await db.commit()
         await db.refresh(new_backbone)
 

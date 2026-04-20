@@ -1,4 +1,5 @@
 import os
+import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
@@ -86,6 +87,7 @@ async def download_backbone(
     summary="Upload backbone weights for FedAvg aggregation",
 )
 async def upload_backbone(
+    request: Request,
     payload: BackboneUpload,
     db: AsyncSession = Depends(get_db),
     aggregator=Depends(_get_aggregator),
@@ -115,6 +117,12 @@ async def upload_backbone(
     # backbone weight tensors (matching GET /federated/model). Decode it here
     # before passing on to the aggregator.
     weights_dict = payload.backbone_weights
+    full_request_size_bytes = len(await request.body())
+    payload_blob = (
+        payload.backbone_weights
+        if isinstance(payload.backbone_weights, str)
+        else json.dumps(payload.backbone_weights, separators=(",", ":"))
+    )
     if isinstance(weights_dict, str):
         from app.backbones.aggregator import decode_backbone_blob
         weights_dict = decode_backbone_blob(weights_dict)
@@ -124,6 +132,8 @@ async def upload_backbone(
         backbone_version=payload.backbone_version,
         interaction_count=payload.interaction_count,
         weights_dict=weights_dict,
+        payload_blob=payload_blob,
+        full_request_size_bytes=full_request_size_bytes,
         db=db,
     )
 
