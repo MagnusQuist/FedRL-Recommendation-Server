@@ -46,3 +46,8 @@ nohup.out
 *.db
 
 .ipynb_checkpoints/
+
+food_item_sorting/
+
+# SSH keys used for scp/ssh to the fedrl-clients EC2
+*.pem

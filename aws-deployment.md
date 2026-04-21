@@ -3,6 +3,7 @@
 ## Part 1: Security Groups
 
 ### Step 1 (fedrl-server-sg)
+
 Console → EC2 → Security Groups → Create security group:
     1. Name: fedrl-server-sg
     2. Description: FedRL server EC2 - SSH + API
@@ -14,6 +15,7 @@ Console → EC2 → Security Groups → Create security group:
     6. Click Create security group.
 
 ### Step 2 (fedrl-clients-sg)
+
 Same flow:
     1. Name: fedrl-clients-sg
     2. Description: FedRL clients EC2 - SSH only inbound
@@ -25,6 +27,7 @@ Same flow:
     5. Outbound rules: default
 
 ### Step 3 (fedrl-db-sg)
+
 Same flow again:
     1. Name: fedrl-db-sg
     2. Description: FedRL Postgres - only from fedrl-server-sg
@@ -34,6 +37,7 @@ Same flow again:
     5. Outbound rules: default
 
 ### Step 4 (Add the cross-SG rule to fedrl-server-sg)
+
 Now that fedrl-clients-sg exists, edit fedrl-server-sg and add an inbound rule:
     - Type: Custom TCP, Port: 8000, Source: fedrl-clients-sg (select it from the dropdown).
 
@@ -65,6 +69,7 @@ Console → RDS → Create database:
 ## Part 3: Launch and provision the server EC2
 
 ### Step 1 (Launch EC2)
+
 Console → EC2 → Launch instance:
     1. Name: fedrl-server
     2. AMI: Ubuntu Server 24.04 LTS (free tier eligible).
@@ -80,11 +85,13 @@ Console → EC2 → Launch instance:
     7. Launch
 
 ### Step 2 (SSH in and install Docker)
+
 ```bash
 ssh -i fedrl-key.pem ubuntu@<public-ip>
 ```
 
 When inside the fedrl-server EC2:
+
 ```bash
 # System updates
 sudo apt-get update && sudo apt-get upgrade -y
@@ -97,28 +104,34 @@ exit
 ```
 
 SSH back in:
+
 ```bash
 docker version          # should show client + server versions
 docker compose version  # should show Docker Compose version
 ```
 
 ### Step 3 (Get the compose file and .env onto the EC2)
+
 On your laptop:
+
 ```bash
 scp -i fedrl-key.pem docker-compose.prod.yml ubuntu@<public-ip>:~/
 ```
 
 Create .env on the EC2 (in the same location as the docker-compose.prod.yml file):
+
 ```bash
 touch .env
 ```
 
 ### Step 4 (Configure .env on the EC2)
+
 ```bash
 sudo nano .env
 ```
 
 Paste the variables (Update so they are correct):
+
 ```
 SERVER_IMAGE=ghcr.io/magnusquist/fedrl-recommendation-server:latest
 DATABASE_URL=postgresql+asyncpg://fedrl:<PASSWORD>@fedrl-db.xxxxx.eu-north-1.rds.amazonaws.com:5432/postgres_fedrl
@@ -131,6 +144,7 @@ MAX_TUPLE_POOL_SIZE=2000
 ```
 
 ### Step 5 (Bring the server online and check it's running)
+
 ```bash
 docker compose -f docker-compose.prod.yml up -d
 
@@ -138,3 +152,4 @@ docker compose -f docker-compose.prod.yml up -d
 curl http://localhost:8000/api/v1/health
 # {"status":"ok","database":"reachable"}
 ```
+
