@@ -8,7 +8,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import AsyncSessionLocal, get_db
-from app.db.models.federated import FederatedBackboneVersion
+from app.db.models.aggregation_events import AggregationEvent
+from app.db.models.federated import FederatedModel
 from app.db.seeding.seed_status import is_database_seeded
 
 
@@ -32,10 +33,22 @@ async def _collect_metrics(aggregator) -> dict:
             if created_at and created_at.tzinfo is None:
                 created_at = created_at.replace(tzinfo=timezone.utc)
 
+            latest_event_result = await db.execute(
+                select(AggregationEvent)
+                .where(AggregationEvent.model_version_after == str(latest.version))
+                .order_by(AggregationEvent.timestamp.desc())
+                .limit(1)
+            )
+            latest_event = latest_event_result.scalar_one_or_none()
+
             backbone_info = {
                 "version": latest.version,
-                "client_count": latest.client_count,
-                "total_interactions": latest.total_interactions,
+                "client_count": (
+                    latest_event.num_clients_in_round if latest_event else None
+                ),
+                "total_interactions": (
+                    latest_event.total_interactions if latest_event else None
+                ),
                 "created_at": created_at.isoformat() if created_at else None,
             }
 
@@ -47,7 +60,7 @@ async def _collect_metrics(aggregator) -> dict:
                 last_update_age_seconds = None
 
         result = await db.execute(
-            select(func.count()).select_from(FederatedBackboneVersion)
+            select(func.count()).select_from(FederatedModel)
         )
         total_versions = int(result.scalar_one())
 

@@ -46,7 +46,7 @@ import torch
 from sqlalchemy import select
 
 from app.db import AsyncSessionLocal
-from app.db.models.federated import FederatedBackboneVersion
+from app.db.models.federated import FederatedModel
 from app.db.models.food_item import FoodItem
 from app.db.models.food_item_category import FoodItemCategory
 from app.db.models.substitution_group_item import SubstitutionGroupItem
@@ -119,8 +119,8 @@ async def _load_db_data():
 
         # Load stored backbone weights
         result = await db.execute(
-            select(FederatedBackboneVersion)
-            .where(FederatedBackboneVersion.version == INITIAL_VERSION)
+            select(FederatedModel)
+            .where(FederatedModel.version == INITIAL_VERSION)
         )
         backbone_row = result.scalar_one_or_none()
         backbone_blob = backbone_row.weights_blob if backbone_row else None

@@ -33,7 +33,6 @@ def _get_centralized_service(request: Request):
     summary="Upload interaction tuples for centralized training",
 )
 async def upload_interactions(
-    request: Request,
     payload: InteractionUpload,
     service: CentralizedService = Depends(_get_centralized_service),
 ):
@@ -42,13 +41,11 @@ async def upload_interactions(
     The upload is buffered; a training round runs only when exactly
     ``CENTRALIZED_CLIENTS_PER_ROUND`` unique clients have uploaded.
     """
-    full_request_size_bytes = len(await request.body())
     try:
         model_version, round_triggered, queued_clients = await service.process_interactions(
             client_id=payload.client_id,
             count=payload.count,
             data=payload.data,
-            full_request_size_bytes=full_request_size_bytes,
         )
     except Exception as e:
         logger.exception("Centralized interaction processing failed.")

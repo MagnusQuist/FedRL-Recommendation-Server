@@ -213,7 +213,7 @@ All endpoints are mounted under `/api/v1`.
 
 FedAvg is triggered when **exactly** `FEDERATED_CLIENTS_PER_ROUND` unique clients have uploaded (default `2`). There is no timeout — the round waits indefinitely until the required number of clients arrives. This gives strict batch semantics that match the centralized arm's training batch size, so both experimental arms receive updates with the same amount of client signal.
 
-Uploads are keyed by `client_id`, so re-uploads from the same client replace the previous entry rather than growing the queue. Aggregated backbone versions are persisted to PostgreSQL in the `federated_model_versions` table, with wall-clock aggregation time captured in `training_time_seconds`.
+Uploads are keyed by `client_id`, so re-uploads from the same client replace the previous entry rather than growing the queue. Aggregated backbone versions are persisted to PostgreSQL in the `federated_model_versions` table. Per-round metrics (clients, interactions, duration, model size) are logged in `aggregation_events`.
 
 ---
 
@@ -228,8 +228,9 @@ When a round triggers, the service:
 1. Merges the round's buffered tuples into the persistent pool (a sliding window bounded by `MAX_TUPLE_POOL_SIZE`, default `2000`).
 2. Retrains the backbone on the full pool (3 epochs, Adam lr=1e-3).
 3. Applies a Bayesian online update to the global item, price, and nudge heads for each tuple contributed in this round.
-4. Increments `model_version` and persists backbone + heads + pool to PostgreSQL in the `centralized_model_versions` table, including wall-clock `training_time_seconds`.
-5. Clears the in-memory round buffer.
+4. Increments `model_version` and persists backbone + heads + pool to PostgreSQL in the `centralized_model_versions` table.
+5. Logs round-level training metrics (duration, interactions, clients, losses, resource usage, model size) in `centralized_training_events`.
+6. Clears the in-memory round buffer.
 
 The persistent pool is fully restored on server restart. The in-memory round buffer is not — partially-filled batches at restart time are re-collected from the next client uploads (same liveness guarantee as the FL aggregator's queue).
 
@@ -272,8 +273,8 @@ The persistent pool is fully restored on server restart. The in-memory round buf
 │   ├── db/
 │   │   ├── database.py            # Async SQLAlchemy engine + session
 │   │   ├── models/
-│   │   │   ├── federated.py       # FederatedBackboneVersion
-│   │   │   ├── centralized.py     # CentralizedModelVersion
+│   │   │   ├── federated.py       # FederatedModel
+│   │   │   ├── centralized.py     # CentralizedModel
 │   │   │   ├── catalogue_version.py
 │   │   │   ├── category.py
 │   │   │   ├── food_item.py
@@ -341,4 +342,4 @@ Pull requests run lint and build-only (no push) to validate the Dockerfile.
 - **Experimental fairness** — both arms are seeded from identical initial backbone weights (the same pretrained `.npz` produced by `pretrain/`) so comparisons are valid from step 0.
 - **Symmetric batch semantics across arms** — both federated and centralized rounds trigger on exactly N unique client uploads (`FEDERATED_CLIENTS_PER_ROUND` / `CENTRALIZED_CLIENTS_PER_ROUND`). Keep both values equal so the two arms train on the same amount of client signal per round.
 - **No Alembic** — the schema is managed by `Base.metadata.create_all()` at seed time. Adding a column to an existing database requires a manual `ALTER TABLE` or wiping the volume (dev) / RDS snapshot + replace (prod).
-- **Training time is recorded** — both `federated_model_versions` and `centralized_model_versions` include a `training_time_seconds` column populated per round (FedAvg wall-clock; retrain + head updates wall-clock respectively). The seeded v1 row has `NULL`, since no online training produced it.
+- **Round metrics are event-sourced** — model version tables (`federated_model_versions`, `centralized_model_versions`) store only model state needed for the next round. Per-round metrics are recorded in `aggregation_events` and `centralized_training_events`.
