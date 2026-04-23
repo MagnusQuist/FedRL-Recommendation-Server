@@ -8,7 +8,15 @@ All endpoints are mounted under `/api/v1`.
 
 from fastapi import APIRouter
 
-from app.api.routers import catalogue, centralized, federated, health, images, metrics
+from app.api.routers import (
+    catalogue,
+    centralized,
+    federated,
+    health,
+    images,
+    metrics,
+    snapshot,
+)
 
 
 router = APIRouter(prefix="/api/v1")
@@ -22,3 +30,4 @@ router.include_router(centralized.router, tags=["Centralized"])
 
 # Developer-only endpoints
 router.include_router(metrics.router, tags=["Development"])
+router.include_router(snapshot.router, tags=["Development"])
