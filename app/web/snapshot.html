@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>FedRL - DB Snapshot</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="/api/v1/dev/static/css/styles.css" />
+  </head>
+  <body>
+    <header>
+      <div class="title-block">
+        <h1>FedRL Database Snapshot</h1>
+        <p class="subtitle">Development view of database tables and row data.</p>
+      </div>
+      <div class="status-row">
+        <span class="pill">
+          <span id="status-dot" class="dot warn"></span>
+          <span id="status-label">Loading snapshot...</span>
+        </span>
+      </div>
+    </header>
+
+    <div class="toolbar top-toolbar">
+      <label class="inline-control">
+        Max rows per table
+        <input id="max-rows" type="number" min="1" placeholder="all" />
+      </label>
+      <label class="inline-control checkbox">
+        <input id="include-blobs" type="checkbox" checked />
+        Include model blobs
+      </label>
+      <button id="reload-btn" type="button">Reload</button>
+      <a id="download-json" href="/api/v1/dev/db/snapshot/export" class="button-link">Download JSON</a>
+      <a id="download-gzip" href="/api/v1/dev/db/snapshot/export?compress=true" class="button-link">Download GZip</a>
+    </div>
+
+    <div class="layout">
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Snapshot metadata</div>
+            <div class="card-subtitle">Generated timestamp and table count</div>
+          </div>
+        </div>
+        <div class="grid">
+          <div class="metric">
+            <div class="metric-label">Generated at</div>
+            <div id="generated-at" class="metric-value metric-value-sm">-</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Tables</div>
+            <div id="table-count" class="metric-value">-</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Rows included</div>
+            <div id="rows-included" class="metric-value">-</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Rows total</div>
+            <div id="rows-total" class="metric-value">-</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Tables</div>
+            <div class="card-subtitle">Data per database table</div>
+          </div>
+        </div>
+        <div id="tables-root" class="tables-root"></div>
+      </section>
+    </div>
+
+    <script>
+      const STATUS_DOT = document.getElementById("status-dot");
+      const STATUS_LABEL = document.getElementById("status-label");
+      const TABLES_ROOT = document.getElementById("tables-root");
+      const MAX_ROWS_INPUT = document.getElementById("max-rows");
+      const INCLUDE_BLOBS_INPUT = document.getElementById("include-blobs");
+      const RELOAD_BTN = document.getElementById("reload-btn");
+      const DOWNLOAD_JSON_LINK = document.getElementById("download-json");
+      const DOWNLOAD_GZIP_LINK = document.getElementById("download-gzip");
+
+      function setStatus(state, text) {
+        STATUS_DOT.classList.remove("ok", "warn", "danger");
+        STATUS_DOT.classList.add(state);
+        STATUS_LABEL.textContent = text;
+      }
+
+      function formatInt(value) {
+        return Number(value || 0).toLocaleString();
+      }
+
+      function getQuery() {
+        const params = new URLSearchParams();
+        const maxRows = MAX_ROWS_INPUT.value.trim();
+        if (maxRows) params.set("max_rows_per_table", maxRows);
+        params.set("include_model_blobs", INCLUDE_BLOBS_INPUT.checked ? "true" : "false");
+        return params;
+      }
+
+      function buildLinks() {
+        const params = getQuery();
+        const query = params.toString();
+        const suffix = query ? `?${query}` : "";
+        DOWNLOAD_JSON_LINK.href = `/api/v1/dev/db/snapshot/export${suffix}`;
+        const gzipParams = new URLSearchParams(params.toString());
+        gzipParams.set("compress", "true");
+        DOWNLOAD_GZIP_LINK.href = `/api/v1/dev/db/snapshot/export?${gzipParams.toString()}`;
+      }
+
+      function renderTable(table) {
+        const container = document.createElement("details");
+        container.className = "table-block accordion";
+        container.open = false;
+
+        const summary = document.createElement("summary");
+        summary.className = "accordion-summary";
+        summary.innerHTML =
+          `<span class="table-heading mono">${table.table}</span>` +
+          `<span class="accordion-meta mono">rows ${formatInt(table.rows_included)} / ${formatInt(table.row_count)}</span>`;
+        container.appendChild(summary);
+
+        if (table.omitted_columns && table.omitted_columns.length > 0) {
+          const omitted = document.createElement("p");
+          omitted.className = "metric-helper muted mono";
+          omitted.textContent = `Omitted columns: ${table.omitted_columns.join(", ")}`;
+          container.appendChild(omitted);
+        }
+
+        if (!table.rows || table.rows.length === 0) {
+          const empty = document.createElement("p");
+          empty.className = "muted";
+          empty.textContent = "No rows";
+          container.appendChild(empty);
+          return container;
+        }
+
+        const keys = Array.from(
+          table.rows.reduce((set, row) => {
+            Object.keys(row).forEach((k) => set.add(k));
+            return set;
+          }, new Set())
+        );
+
+        const wrapper = document.createElement("div");
+        wrapper.className = "table-wrapper";
+        const htmlTable = document.createElement("table");
+        htmlTable.className = "data-table";
+
+        const thead = document.createElement("thead");
+        const hr = document.createElement("tr");
+        keys.forEach((key) => {
+          const th = document.createElement("th");
+          th.textContent = key;
+          hr.appendChild(th);
+        });
+        thead.appendChild(hr);
+        htmlTable.appendChild(thead);
+
+        const tbody = document.createElement("tbody");
+        table.rows.forEach((row) => {
+          const tr = document.createElement("tr");
+          keys.forEach((key) => {
+            const td = document.createElement("td");
+            const value = row[key];
+            if (value == null) {
+              td.textContent = "";
+            } else if (typeof value === "object") {
+              td.textContent = JSON.stringify(value);
+            } else {
+              td.textContent = String(value);
+            }
+            tr.appendChild(td);
+          });
+          tbody.appendChild(tr);
+        });
+        htmlTable.appendChild(tbody);
+        wrapper.appendChild(htmlTable);
+        container.appendChild(wrapper);
+
+        return container;
+      }
+
+      function renderSnapshot(data) {
+        const tables = data.tables || [];
+        const included = tables.reduce((acc, t) => acc + (t.rows_included || 0), 0);
+        const total = tables.reduce((acc, t) => acc + (t.row_count || 0), 0);
+
+        document.getElementById("generated-at").textContent = data.generated_at || "-";
+        document.getElementById("table-count").textContent = formatInt(tables.length);
+        document.getElementById("rows-included").textContent = formatInt(included);
+        document.getElementById("rows-total").textContent = formatInt(total);
+
+        TABLES_ROOT.innerHTML = "";
+        tables.forEach((table) => TABLES_ROOT.appendChild(renderTable(table)));
+      }
+
+      async function loadSnapshot() {
+        buildLinks();
+        setStatus("warn", "Loading...");
+
+        try {
+          const params = getQuery();
+          const qs = params.toString();
+          const url = `/api/v1/dev/db/snapshot/json${qs ? `?${qs}` : ""}`;
+          const resp = await fetch(url);
+          if (!resp.ok) {
+            throw new Error(`HTTP ${resp.status}`);
+          }
+          const data = await resp.json();
+          renderSnapshot(data);
+          setStatus("ok", "Loaded");
+        } catch (err) {
+          console.error(err);
+          TABLES_ROOT.innerHTML = `<p class="muted">Failed to load snapshot: ${String(err)}</p>`;
+          setStatus("danger", "Load failed");
+        }
+      }
+
+      RELOAD_BTN.addEventListener("click", loadSnapshot);
+      MAX_ROWS_INPUT.addEventListener("change", buildLinks);
+      INCLUDE_BLOBS_INPUT.addEventListener("change", buildLinks);
+
+      window.addEventListener("load", loadSnapshot);
+    </script>
+  </body>
+</html>

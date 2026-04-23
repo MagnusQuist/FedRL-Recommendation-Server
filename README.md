@@ -206,14 +206,15 @@ All endpoints are mounted under `/api/v1`.
 | `GET` | `/dev/metrics/json` | FL aggregation state snapshot |
 | `WS`  | `/dev/metrics/ws` | Live metrics stream (pushes every 2 s) |
 | `GET` | `/dev/metrics` | HTML dashboard |
-| `GET` | `/dev/db/snapshot` | Database snapshot as JSON response |
+| `GET` | `/dev/db/snapshot` | HTML page with database tables and row data |
+| `GET` | `/dev/db/snapshot/json` | Database snapshot as JSON response |
 | `GET` | `/dev/db/snapshot/export` | Download database snapshot (`.json` or `.json.gz` with `compress=true`) |
 
 ---
 
 ## Snapshot and backup strategy
 
-- Use `/api/v1/dev/db/snapshot` and `/api/v1/dev/db/snapshot/export` for developer inspection and local analysis.
+- Use `/api/v1/dev/db/snapshot` (HTML) and `/api/v1/dev/db/snapshot/export` (download) for developer inspection and local analysis.
 - For large payloads, use compressed export:
 
 ```bash

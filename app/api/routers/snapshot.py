@@ -3,10 +3,11 @@ from __future__ import annotations
 import gzip
 import json
 from datetime import date, datetime, time, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from sqlalchemy import func, inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +25,7 @@ from app.db.models.substitution_group import SubstitutionGroup
 from app.db.models.substitution_group_item import SubstitutionGroupItem
 
 router = APIRouter(prefix="/dev/db")
+SNAPSHOT_HTML_PATH = Path(__file__).resolve().parents[2] / "web" / "snapshot.html"
 
 _TABLE_MODELS: list[tuple[str, type[Any]]] = [
     ("catalogue_versions", CatalogueVersion),
@@ -141,8 +143,14 @@ async def _build_snapshot(
     )
 
 
-@router.get("/snapshot", response_model=DatabaseSnapshotResponse)
-async def db_snapshot(
+@router.get("/snapshot")
+async def db_snapshot_page():
+    """Developer page showing database tables and row data."""
+    return FileResponse(SNAPSHOT_HTML_PATH)
+
+
+@router.get("/snapshot/json", response_model=DatabaseSnapshotResponse)
+async def db_snapshot_json(
     max_rows_per_table: int | None = Query(default=None, ge=1, le=10_000),
     include_model_blobs: bool = Query(default=True),
     db: AsyncSession = Depends(get_db),
@@ -168,7 +176,7 @@ async def export_db_snapshot(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Same data as /snapshot, but returned as a downloadable attachment.
+    Same data as /snapshot/json, but returned as a downloadable attachment.
     Set ``compress=true`` to return ``application/gzip``.
     """
     snapshot = await _build_snapshot(

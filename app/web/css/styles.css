@@ -246,3 +246,137 @@ h1 {
   border-color: var(--accent-strong);
   background: rgba(37, 99, 235, 0.12);
 }
+
+.top-toolbar {
+  margin-top: 6px;
+  margin-bottom: 8px;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.inline-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.inline-control.checkbox {
+  user-select: none;
+}
+
+.inline-control input[type="number"] {
+  width: 90px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.button-link,
+#reload-btn {
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.button-link:hover,
+#reload-btn:hover {
+  border-color: var(--accent-strong);
+  background: rgba(37, 99, 235, 0.12);
+}
+
+.metric-value-sm {
+  font-size: 14px;
+}
+
+.tables-root {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.table-block {
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 12px;
+  background: var(--surface-soft);
+}
+
+.table-heading {
+  margin: 0;
+  font-size: 14px;
+}
+
+.accordion-summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.accordion-summary::-webkit-details-marker {
+  display: none;
+}
+
+.accordion-summary::before {
+  content: "▸";
+  font-size: 13px;
+  color: var(--muted);
+  margin-right: 6px;
+}
+
+details[open] > .accordion-summary::before {
+  content: "▾";
+}
+
+.accordion-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.table-wrapper {
+  margin-top: 8px;
+  overflow: auto;
+  max-height: 420px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.data-table th,
+.data-table td {
+  border-bottom: 1px solid var(--border-subtle);
+  border-right: 1px solid var(--border-subtle);
+  padding: 6px 8px;
+  vertical-align: top;
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.data-table th:last-child,
+.data-table td:last-child {
+  border-right: 0;
+}
+
+.data-table th {
+  position: sticky;
+  top: 0;
+  background: #eef3ff;
+  z-index: 1;
+}
