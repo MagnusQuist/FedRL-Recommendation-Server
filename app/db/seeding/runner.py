@@ -39,13 +39,17 @@ async def seed_all() -> None:
 
 
 async def bootstrap_if_empty() -> bool:
-    """If no tables yet: create schema and seed. Otherwise no-op. Returns whether bootstrap ran."""
-    if await has_tables():
-        logger.info("Database already initialised — skipping bootstrap.")
+    """Ensure all model tables exist; seed only on first-time bootstrap."""
+    already_initialised = await has_tables()
+
+    # Always run create_all so newly added models/tables are created on existing DBs.
+    await ensure_models()
+
+    if already_initialised:
+        logger.info("Database already initialised — skipping data bootstrap.")
         return False
 
-    logger.info("Fresh database detected — creating tables and seeding.")
-    await ensure_models()
+    logger.info("Fresh database detected — running bootstrap seeders.")
     await seed_all()
     logger.info("Bootstrap complete.")
     return True
