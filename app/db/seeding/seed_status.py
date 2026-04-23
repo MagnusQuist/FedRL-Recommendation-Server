@@ -8,11 +8,30 @@ from app.db import AsyncSessionLocal, engine
 _SENTINEL_TABLE = "categories"
 
 
-async def has_tables() -> bool:
-    """True if ``categories`` exists (sentinel for schema present)."""
+async def has_table(table_name: str) -> bool:
+    """True if ``table_name`` exists."""
     async with engine.begin() as conn:
         return await conn.run_sync(
-            lambda sync_conn: inspect(sync_conn).has_table(_SENTINEL_TABLE)
+            lambda sync_conn: inspect(sync_conn).has_table(table_name)
+        )
+
+
+async def has_tables() -> bool:
+    """True if ``categories`` exists (sentinel for schema present)."""
+    return await has_table(_SENTINEL_TABLE)
+
+
+async def has_column(table_name: str, column_name: str) -> bool:
+    """True if ``table_name`` contains ``column_name``."""
+    async with engine.begin() as conn:
+        return await conn.run_sync(
+            lambda sync_conn: (
+                inspect(sync_conn).has_table(table_name)
+                and any(
+                    col.get("name") == column_name
+                    for col in inspect(sync_conn).get_columns(table_name)
+                )
+            )
         )
 
 

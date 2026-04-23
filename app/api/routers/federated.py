@@ -1,12 +1,13 @@
 import os
-import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas.federated import BackboneDownload, BackboneUpload, RoundStatus, UploadAck
 from app.db import get_db
+from app.db.models.aggregation_events import AggregationEvent
 from app.logger import logger
 
 router = APIRouter(prefix="/federated")
@@ -72,10 +73,18 @@ async def download_backbone(
     if latest.version <= since:
         return Response(status_code=status.HTTP_304_NOT_MODIFIED)
 
+    round_metrics_result = await db.execute(
+        select(AggregationEvent)
+        .where(AggregationEvent.model_version_after == str(latest.version))
+        .order_by(AggregationEvent.timestamp.desc())
+        .limit(1)
+    )
+    latest_round_metrics = round_metrics_result.scalar_one_or_none()
+
     return BackboneDownload(
         version=latest.version,
-        client_count=latest.client_count,
-        total_interactions=latest.total_interactions,
+        client_count=latest_round_metrics.num_clients_in_round if latest_round_metrics else 0,
+        total_interactions=latest_round_metrics.total_interactions if latest_round_metrics else 0,
         backbone_weights=latest.weights_blob,
     )
 
@@ -87,7 +96,6 @@ async def download_backbone(
     summary="Upload backbone weights for FedAvg aggregation",
 )
 async def upload_backbone(
-    request: Request,
     payload: BackboneUpload,
     db: AsyncSession = Depends(get_db),
     aggregator=Depends(_get_aggregator),
@@ -117,12 +125,6 @@ async def upload_backbone(
     # backbone weight tensors (matching GET /federated/model). Decode it here
     # before passing on to the aggregator.
     weights_dict = payload.backbone_weights
-    full_request_size_bytes = len(await request.body())
-    payload_blob = (
-        payload.backbone_weights
-        if isinstance(payload.backbone_weights, str)
-        else json.dumps(payload.backbone_weights, separators=(",", ":"))
-    )
     if isinstance(weights_dict, str):
         from app.backbones.aggregator import decode_backbone_blob
         weights_dict = decode_backbone_blob(weights_dict)
@@ -132,8 +134,6 @@ async def upload_backbone(
         backbone_version=payload.backbone_version,
         interaction_count=payload.interaction_count,
         weights_dict=weights_dict,
-        payload_blob=payload_blob,
-        full_request_size_bytes=full_request_size_bytes,
         db=db,
     )
 

@@ -24,6 +24,7 @@ import gzip
 import json
 import os
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -32,8 +33,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import AsyncSessionLocal
-from app.db.models.federated import FederatedBackboneVersion
-from app.db.models.training_payload_log import TrainingPayloadLog
+from app.db.models.aggregation_events import AggregationEvent
+from app.db.models.federated import FederatedModel
 from app.logger import logger
 
 # ---------------------------------------------------------------------------
@@ -51,8 +52,6 @@ class QueuedUpload:
     backbone_version: int
     interaction_count: int
     weights: dict[str, np.ndarray]
-    payload_blob: str
-    full_request_size_bytes: int
     received_at: float = field(default_factory=time.monotonic)
 
 
@@ -64,7 +63,7 @@ def _fedavg_and_serialize(
 ) -> str:
     """
     Execute FedAvg over ``eligible`` uploads and return the gzip+base64 blob
-    suitable for direct insertion into ``FederatedBackboneVersion.weights_blob``.
+    suitable for direct insertion into ``FederatedModel.weights_blob``.
     """
     aggregated: dict[str, np.ndarray] = {}
     param_keys = list(eligible[0].weights.keys())
@@ -101,14 +100,12 @@ class FLAggregator:
         try:
             async with AsyncSessionLocal() as db:
                 latest_version = (
-                    await db.execute(select(func.max(FederatedBackboneVersion.version)))
+                    await db.execute(select(func.max(FederatedModel.version)))
                 ).scalar()
 
                 completed_rounds = (
                     await db.execute(
-                        select(func.count(FederatedBackboneVersion.id)).where(
-                            FederatedBackboneVersion.client_count > 0
-                        )
+                        select(func.count(AggregationEvent.aggregation_event_id))
                     )
                 ).scalar() or 0
 
@@ -140,8 +137,6 @@ class FLAggregator:
         backbone_version: int,
         interaction_count: int,
         weights_dict: dict[str, list],
-        payload_blob: str,
-        full_request_size_bytes: int,
         db: AsyncSession,
     ) -> tuple[bool, int]:
         """
@@ -158,8 +153,6 @@ class FLAggregator:
                 backbone_version=backbone_version,
                 interaction_count=interaction_count,
                 weights=weights,
-                payload_blob=payload_blob,
-                full_request_size_bytes=full_request_size_bytes,
             )
 
             queued = len(self._queue)
@@ -190,11 +183,11 @@ class FLAggregator:
     async def get_current_version(
         self,
         db: AsyncSession,
-    ) -> Optional[FederatedBackboneVersion]:
+    ) -> Optional[FederatedModel]:
         """Return the latest persisted federated backbone."""
         result = await db.execute(
-            select(FederatedBackboneVersion)
-            .order_by(FederatedBackboneVersion.version.desc())
+            select(FederatedModel)
+            .order_by(FederatedModel.version.desc())
             .limit(1)
         )
         return result.scalar_one_or_none()
@@ -274,46 +267,53 @@ class FLAggregator:
         # Offload the CPU-bound reduce + gzip + base64 to a worker thread,
         # backbone retraining in ``asyncio.to_thread``. Keeps the API event
         # loop responsive when a round is triggered.
-        train_start = time.perf_counter()
+        aggregation_started_at = datetime.now(timezone.utc)
+        aggregation_started_perf = time.perf_counter()
         blob = await asyncio.to_thread(_fedavg_and_serialize, eligible, n_total)
-        training_time_seconds = time.perf_counter() - train_start
+        aggregation_duration_ms = int(
+            round((time.perf_counter() - aggregation_started_perf) * 1000)
+        )
 
+        model_version_before = (
+            str(base_versions.pop())
+            if len(base_versions) == 1
+            else ",".join(str(version) for version in sorted(base_versions))
+        )
         next_version = await self._next_version(db)
 
-        new_backbone = FederatedBackboneVersion(
+        new_backbone = FederatedModel(
             version=next_version,
             weights_blob=blob,
-            client_count=len(eligible),
-            total_interactions=n_total,
-            training_time_seconds=training_time_seconds,
         )
         db.add(new_backbone)
         await db.flush()
 
-        for upload in eligible:
-            size_bytes = len(upload.payload_blob.encode("utf-8"))
-            size_kb = size_bytes / 1024
-            size_mb = size_bytes / (1024 * 1024)
-            db.add(
-                TrainingPayloadLog(
-                    client_id=upload.client_id,
-                    payload_blob=upload.payload_blob,
-                    payload_size_bytes=size_bytes,
-                    payload_size_kb=size_kb,
-                    payload_size_mb=size_mb,
-                    full_request_size_bytes=upload.full_request_size_bytes,
-                    federated_model_version_id=new_backbone.id,
-                )
+        db.add(
+            AggregationEvent(
+                timestamp=aggregation_started_at,
+                aggregation_duration_ms=aggregation_duration_ms,
+                participating_clients_ids=[upload.client_id for upload in eligible],
+                num_clients_in_round=len(eligible),
+                total_interactions=n_total,
+                model_version_before=model_version_before,
+                model_version_after=str(next_version),
+                model_size_bytes=len(blob.encode("utf-8")),
+                logged_at=datetime.now(timezone.utc),
             )
-            logger.info(
-                "Federated round payload logged: version=%d client_id='%s' "
-                "payload_size=%.2f KB (%.4f MB) full_request_size=%d bytes",
-                next_version,
-                upload.client_id,
-                size_kb,
-                size_mb,
-                upload.full_request_size_bytes,
-            )
+        )
+
+        logger.info(
+            "Aggregation event logged: version=%d aggregation_duration_ms=%d "
+            "num_clients_in_round=%d total_interactions=%d "
+            "model_version_before=%s model_version_after=%s model_size_bytes=%d",
+            next_version,
+            aggregation_duration_ms,
+            len(eligible),
+            n_total,
+            model_version_before,
+            str(next_version),
+            len(blob.encode("utf-8")),
+        )
 
         await db.commit()
         await db.refresh(new_backbone)
@@ -322,11 +322,11 @@ class FLAggregator:
         self._rounds_completed += 1
         logger.info(
             "FedAvg round complete — version=%d clients=%d interactions=%d "
-            "training_time=%.3fs rounds_completed=%d",
+            "aggregation_duration_ms=%d rounds_completed=%d",
             new_backbone.version,
             len(eligible),
             n_total,
-            training_time_seconds,
+            aggregation_duration_ms,
             self._rounds_completed,
         )
 

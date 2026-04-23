@@ -29,7 +29,9 @@ import json
 import os
 import random
 import time
+import tracemalloc
 from collections import OrderedDict
+from datetime import datetime, timezone
 from typing import Any
 
 import numpy as np
@@ -39,8 +41,8 @@ import torch.optim as optim
 from sqlalchemy import func, select
 
 from app.db import AsyncSessionLocal
-from app.db.models.centralized import CentralizedModelVersion
-from app.db.models.training_payload_log import TrainingPayloadLog
+from app.db.models.centralized_training_events import CentralizedTrainingEvent
+from app.db.models.centralized import CentralizedModel
 from app.logger import logger
 
 # ---------------------------------------------------------------------------
@@ -239,6 +241,27 @@ def retrain_backbone(backbone: BackboneEncoder, reward_predictor: RewardPredicto
     return avg_loss
 
 
+def evaluate_backbone_loss(
+    backbone: BackboneEncoder,
+    reward_predictor: RewardPredictor,
+    tuples: list[dict],
+) -> float:
+    """Compute MSE loss over tuples without updating model parameters."""
+    if not tuples:
+        return 0.0
+
+    contexts = torch.tensor([t["context"] for t in tuples], dtype=torch.float32)
+    rewards = torch.tensor([t["reward"] for t in tuples], dtype=torch.float32).unsqueeze(1)
+
+    backbone.eval()
+    reward_predictor.eval()
+    with torch.no_grad():
+        emb = backbone(contexts)
+        pred = reward_predictor(emb)
+        loss = nn.functional.mse_loss(pred, rewards)
+    return float(loss.item())
+
+
 # ---------------------------------------------------------------------------
 # Head update — apply one tuple to the global heads
 # ---------------------------------------------------------------------------
@@ -287,7 +310,6 @@ class CentralizedService:
         # ``CLIENTS_PER_ROUND`` unique clients have uploaded.
         self._pending_clients: set[str] = set()
         self._pending_tuples: list[dict] = []
-        self._pending_payloads: dict[str, tuple[str, int]] = {}
 
         # Versioning
         self.model_version: int = 0
@@ -303,17 +325,15 @@ class CentralizedService:
         try:
             async with AsyncSessionLocal() as db:
                 result = await db.execute(
-                    select(CentralizedModelVersion)
-                    .order_by(CentralizedModelVersion.version.desc())
+                    select(CentralizedModel)
+                    .order_by(CentralizedModel.version.desc())
                     .limit(1)
                 )
                 row = result.scalar_one_or_none()
 
                 completed_rounds = (
                     await db.execute(
-                        select(func.count(CentralizedModelVersion.id)).where(
-                            CentralizedModelVersion.client_count > 0
-                        )
+                        select(func.count(CentralizedTrainingEvent.centralized_training_event_id))
                     )
                 ).scalar() or 0
 
@@ -354,10 +374,18 @@ class CentralizedService:
     async def _persist_to_db(
         self,
         client_count: int,
-        training_time_seconds: float,
-        payload_uploads: list[tuple[str, str, int]],
+        num_interactions: int,
+        contributing_client_ids: list[str],
+        training_duration_ms: int,
+        model_version_before: int,
+        cpu_usage_percentage: float,
+        memory_usage_mb: float,
+        loss_before: float,
+        loss_after: float | None,
+        loss_delta: float | None,
+        timestamp: datetime,
     ) -> None:
-        """Insert a new CentralizedModelVersion row capturing the full current state."""
+        """Insert a new CentralizedModel row capturing the full current state."""
         backbone_blob = _encode(_backbone_to_serialisable(self.backbone))
         rp_blob = _encode({k: v.tolist() for k, v in self.reward_predictor.state_dict().items()})
         item_blob = _encode(self.item_head.state_dict())
@@ -366,7 +394,7 @@ class CentralizedService:
         pool_blob = _encode(self._tuple_pool)
 
         async with AsyncSessionLocal() as db:
-            row = CentralizedModelVersion(
+            row = CentralizedModel(
                 version=self.model_version,
                 backbone_blob=backbone_blob,
                 reward_predictor_blob=rp_blob,
@@ -374,35 +402,46 @@ class CentralizedService:
                 price_head_blob=price_blob,
                 nudge_head_blob=nudge_blob,
                 tuple_pool_blob=pool_blob,
-                client_count=client_count,
-                training_time_seconds=training_time_seconds,
             )
             db.add(row)
             await db.flush()
 
-            for client_id, payload_blob, full_request_size_bytes in payload_uploads:
-                size_bytes = len(payload_blob.encode("utf-8"))
-                size_kb = size_bytes / 1024
-                size_mb = size_bytes / (1024 * 1024)
-                db.add(
-                    TrainingPayloadLog(
-                        client_id=client_id,
-                        payload_blob=payload_blob,
-                        payload_size_bytes=size_bytes,
-                        payload_size_kb=size_kb,
-                        payload_size_mb=size_mb,
-                        full_request_size_bytes=full_request_size_bytes,
-                        centralized_model_version_id=row.id,
-                    )
+            model_size_bytes = sum(
+                len(blob.encode("utf-8"))
+                for blob in (
+                    backbone_blob,
+                    rp_blob,
+                    item_blob,
+                    price_blob,
+                    nudge_blob,
+                    pool_blob,
                 )
-                logger.info(
-                    "Centralized round payload logged: version=%d client_id='%s' "
-                    "payload_size=%.2f KB (%.4f MB) full_request_size=%d bytes",
+            )
+            db.add(
+                CentralizedTrainingEvent(
+                    timestamp=timestamp,
+                    training_duration_ms=training_duration_ms,
+                    num_interactions=num_interactions,
+                    num_clients_contributing=client_count,
+                    contributing_client_ids=contributing_client_ids,
+                    cpu_usage_percentage=cpu_usage_percentage,
+                    memory_usage_mb=memory_usage_mb,
+                    loss_before=loss_before,
+                    loss_after=loss_after,
+                    loss_delta=loss_delta,
+                    model_version_before=str(model_version_before),
+                    model_version_after=str(self.model_version),
+                    model_size_bytes=model_size_bytes,
+                    logged_at=datetime.now(timezone.utc),
+                )
+            )
+
+            logger.info(
+                    "Centralized training event logged: num_clients_contributing=%d model_version_before=%s model_version_after=%s model_size_bytes=%d",
+                    client_count,
+                    model_version_before,
                     self.model_version,
-                    client_id,
-                    size_kb,
-                    size_mb,
-                    full_request_size_bytes,
+                    model_size_bytes,
                 )
 
             await db.commit()
@@ -410,7 +449,7 @@ class CentralizedService:
     # ── Core processing ────────────────────────────────────────────────────
 
     async def process_interactions(
-        self, client_id: str, count: int, data: str, full_request_size_bytes: int
+        self, client_id: str, count: int, data: str
     ) -> tuple[int, bool, int]:
         """
         Buffer a client's interaction tuples. When exactly
@@ -426,7 +465,6 @@ class CentralizedService:
         async with self._lock:
             self._pending_clients.add(client_id)
             self._pending_tuples.extend(tuples)
-            self._pending_payloads[client_id] = (data, full_request_size_bytes)
 
             queued = len(self._pending_clients)
             logger.info(
@@ -470,49 +508,77 @@ class CentralizedService:
         if len(self._tuple_pool) > MAX_TUPLE_POOL_SIZE:
             self._tuple_pool = self._tuple_pool[-MAX_TUPLE_POOL_SIZE:]
 
-        train_start = time.perf_counter()
+        loss_before = evaluate_backbone_loss(
+            self.backbone,
+            self.reward_predictor,
+            self._tuple_pool,
+        )
+
+        # Start timing
+        round_started_at = datetime.now(timezone.utc)
+        round_started_perf = time.perf_counter()
+        round_started_cpu = time.process_time()
+        tracemalloc.start()
+
+        # Retrain the backbone
         loss = await asyncio.to_thread(
             retrain_backbone, self.backbone, self.reward_predictor, self._tuple_pool
         )
 
+        # Apply head updates
         for t in batch_tuples:
             apply_tuple_to_heads(
                 self.backbone, self.item_head, self.price_head, self.nudge_head, t
             )
-        training_time_seconds = time.perf_counter() - train_start
 
+        # Get metrics
+        _, peak_memory_bytes = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        elapsed_wall = time.perf_counter() - round_started_perf
+        elapsed_cpu = time.process_time() - round_started_cpu
+        training_duration_ms = int(
+            round(elapsed_wall * 1000)
+        )
+        cpu_usage_percentage = (
+            (elapsed_cpu / elapsed_wall) * 100 if elapsed_wall > 0 else 0.0
+        )
+        memory_usage_mb = peak_memory_bytes / (1024 * 1024)
+        loss_delta = float(loss - loss_before)
+
+        # Persist to database
+        model_version_before = self.model_version
         self.model_version += 1
         await self._persist_to_db(
             client_count=batch_clients,
-            training_time_seconds=training_time_seconds,
-            payload_uploads=[
-                (
-                    client_id,
-                    self._pending_payloads[client_id][0],
-                    self._pending_payloads[client_id][1],
-                )
-                for client_id in self._pending_clients
-                if client_id in self._pending_payloads
-            ],
+            num_interactions=len(batch_tuples),
+            contributing_client_ids=sorted(self._pending_clients),
+            training_duration_ms=training_duration_ms,
+            model_version_before=model_version_before,
+            cpu_usage_percentage=cpu_usage_percentage,
+            memory_usage_mb=memory_usage_mb,
+            loss_before=loss_before,
+            loss_after=loss,
+            loss_delta=loss_delta,
+            timestamp=round_started_at,
         )
 
+        # Log
         self._rounds_completed += 1
         logger.info(
             "Centralized training round complete — version=%d clients=%d "
-            "round_tuples=%d pool_size=%d loss=%.6f training_time=%.3fs "
+            "round_tuples=%d pool_size=%d loss=%.6f training_duration_ms=%d "
             "rounds_completed=%d",
             self.model_version,
             batch_clients,
             len(batch_tuples),
             len(self._tuple_pool),
             loss,
-            training_time_seconds,
+            training_duration_ms,
             self._rounds_completed,
         )
 
         self._pending_clients.clear()
         self._pending_tuples = []
-        self._pending_payloads = {}
 
     # ── Model serialisation for GET endpoint ───────────────────────────────
 

@@ -19,8 +19,8 @@ BACKBONE_PARAM_KEYS = frozenset({
 })
 
 
-class FederatedBackboneVersionRead(BaseModel):
-    """Pydantic mirror of ORM ``FederatedBackboneVersion``."""
+class FederatedModelRead(BaseModel):
+    """Pydantic mirror of ORM ``FederatedModel``."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -29,12 +29,6 @@ class FederatedBackboneVersionRead(BaseModel):
     weights_blob: str = Field(
         ...,
         description="gzip-compressed, base64-encoded JSON of backbone weight arrays.",
-    )
-    client_count: int = Field(..., ge=0, description="Clients whose uploads contributed to this round.")
-    total_interactions: int = Field(
-        ...,
-        ge=0,
-        description="Sum of n_k across all contributing clients for this round.",
     )
     created_at: datetime
 
@@ -107,7 +101,7 @@ class BackboneDownload(BaseModel):
     """
     Response body for GET /federated/model when a backbone is available.
 
-    Subset of ``FederatedBackboneVersionRead``: ``backbone_weights`` is the API
+    Subset of ``FederatedModelRead``: ``backbone_weights`` is the API
     name for ORM ``weights_blob``.
     """
 

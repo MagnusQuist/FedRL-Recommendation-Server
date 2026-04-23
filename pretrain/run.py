@@ -36,7 +36,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from sqlalchemy import select, delete
 
 from app.db import AsyncSessionLocal
-from app.db.models.federated import FederatedBackboneVersion
+from app.db.models.federated import FederatedModel
 from app.db.models.food_item import FoodItem
 from app.db.models.food_item_category import FoodItemCategory
 from app.db.models.substitution_group_item import SubstitutionGroupItem
@@ -200,16 +200,14 @@ async def _save_backbone(weights: dict[str, np.ndarray], dry_run: bool) -> None:
 
     async with AsyncSessionLocal() as db:
         await db.execute(
-            delete(FederatedBackboneVersion).where(
-                FederatedBackboneVersion.version == INITIAL_VERSION,
+            delete(FederatedModel).where(
+                FederatedModel.version == INITIAL_VERSION,
             )
         )
 
-        backbone = FederatedBackboneVersion(
+        backbone = FederatedModel(
             version=INITIAL_VERSION,
             weights_blob=blob,
-            client_count=0,
-            total_interactions=0,
         )
         db.add(backbone)
         await db.commit()

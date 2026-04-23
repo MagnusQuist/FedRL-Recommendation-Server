@@ -16,8 +16,8 @@ import numpy as np
 from sqlalchemy import select
 
 from app.db import AsyncSessionLocal
-from app.db.models.centralized import CentralizedModelVersion
-from app.db.models.federated import FederatedBackboneVersion
+from app.db.models.centralized import CentralizedModel
+from app.db.models.federated import FederatedModel
 from app.logger import logger
 
 INPUT_DIM = 18
@@ -117,8 +117,8 @@ def _default_reward_predictor() -> dict:
 async def _federated_backbone_exists() -> bool:
     async with AsyncSessionLocal() as db:
         result = await db.execute(
-            select(FederatedBackboneVersion)
-            .where(FederatedBackboneVersion.version == INITIAL_VERSION)
+            select(FederatedModel)
+            .where(FederatedModel.version == INITIAL_VERSION)
             .limit(1)
         )
         return result.scalar_one_or_none() is not None
@@ -127,8 +127,8 @@ async def _federated_backbone_exists() -> bool:
 async def _centralized_backbone_exists() -> bool:
     async with AsyncSessionLocal() as db:
         result = await db.execute(
-            select(CentralizedModelVersion)
-            .where(CentralizedModelVersion.version == INITIAL_VERSION)
+            select(CentralizedModel)
+            .where(CentralizedModel.version == INITIAL_VERSION)
             .limit(1)
         )
         return result.scalar_one_or_none() is not None
@@ -147,11 +147,9 @@ async def seed_federated_backbone() -> None:
     blob = serialise_weights(weights)
 
     async with AsyncSessionLocal() as db:
-        row = FederatedBackboneVersion(
+        row = FederatedModel(
             version=INITIAL_VERSION,
             weights_blob=blob,
-            client_count=0,
-            total_interactions=0,
         )
         db.add(row)
         await db.commit()
@@ -174,7 +172,7 @@ async def seed_centralized_backbone() -> None:
     weights = load_pretrained_weights()
 
     async with AsyncSessionLocal() as db:
-        row = CentralizedModelVersion(
+        row = CentralizedModel(
             version=INITIAL_VERSION,
             backbone_blob=serialise_weights(weights),
             reward_predictor_blob=_encode(_default_reward_predictor()),
@@ -182,7 +180,6 @@ async def seed_centralized_backbone() -> None:
             price_head_blob=_encode(_default_price_head()),
             nudge_head_blob=_encode(_default_nudge_head()),
             tuple_pool_blob=_encode([]),
-            client_count=0,
         )
         db.add(row)
         await db.commit()
