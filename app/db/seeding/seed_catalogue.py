@@ -6,14 +6,17 @@ import asyncio
 import csv
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import MetaData, delete, text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 
 TABLE_NAMES = [
+    "catalogue_versions",
     "categories",
     "food_item_categories",
     "substitution_groups",
@@ -265,6 +268,7 @@ async def seed_catalogue() -> None:
     substitution_groups_table = metadata.tables["substitution_groups"]
     substitution_group_items_table = metadata.tables["substitution_group_items"]
     food_items_table = metadata.tables["food_items"]
+    catalogue_versions_table = metadata.tables["catalogue_versions"]
 
     async with engine.begin() as conn:
         # Clear in FK-safe order
@@ -293,14 +297,24 @@ async def seed_catalogue() -> None:
                 substitution_group_items_table.insert(), substitution_group_items
             )
 
+        # Register a new catalogue snapshot version for this seed run.
+        seeded_at = datetime.now(timezone.utc)
+        seeded_version = str(uuid4())
+        await conn.execute(
+            catalogue_versions_table.insert(),
+            [{"version": seeded_version, "generated_at": seeded_at}],
+        )
+
         # Reset sequences for explicit PK inserts
         await _reset_sequence(conn, "categories", "category_id")
         await _reset_sequence(conn, "substitution_groups", "substitution_group_id")
+        await _reset_sequence(conn, "catalogue_versions", "id")
 
     await engine.dispose()
 
     print(
         "Catalogue seeded successfully: "
+        f"catalogue_version={seeded_version}, "
         f"{len(food_items)} food_items, "
         f"{len(categories)} categories, "
         f"{len(food_item_categories)} food_item_categories, "
