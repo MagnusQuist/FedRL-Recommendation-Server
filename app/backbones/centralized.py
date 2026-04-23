@@ -54,6 +54,8 @@ MAX_TUPLE_POOL_SIZE = int(os.getenv("MAX_TUPLE_POOL_SIZE", "2000"))
 RETRAIN_LR = 1e-3
 RETRAIN_EPOCHS = 3
 RETRAIN_BATCH_SIZE = 32
+RETRAIN_WEIGHT_DECAY = 1e-4
+RETRAIN_GRAD_CLIP = 1.0
 CTX_PRICE_DELTA = 2  # index 2 in the 18-dim context vector
 
 NUDGE_TYPES = ["N1", "N2", "N3", "N4", "N5", "N6"]
@@ -206,39 +208,139 @@ def _backbone_to_serialisable(backbone: BackboneEncoder) -> dict:
 # ---------------------------------------------------------------------------
 # Backbone retraining
 # ---------------------------------------------------------------------------
-def retrain_backbone(backbone: BackboneEncoder, reward_predictor: RewardPredictor,
-                     tuples: list[dict]) -> float:
+def retrain_backbone(
+    backbone: BackboneEncoder,
+    reward_predictor: RewardPredictor,
+    tuples: list[dict],
+    seed: int | None = None,
+) -> float:
     if not tuples:
         return 0.0
 
-    contexts = torch.tensor([t["context"] for t in tuples], dtype=torch.float32)
-    rewards = torch.tensor([t["reward"] for t in tuples], dtype=torch.float32).unsqueeze(1)
+    device = next(backbone.parameters()).device
+    rng = random.Random(seed)
+
+    contexts = torch.tensor(
+        [t["context"] for t in tuples], dtype=torch.float32, device=device
+    )
+    rewards = torch.tensor(
+        [t["reward"] for t in tuples], dtype=torch.float32, device=device
+    ).unsqueeze(1)
+
+    n_samples = len(tuples)
+    reward_mean = float(rewards.mean().item())
+    reward_std = float(rewards.std(unbiased=False).item())
+    reward_min = float(rewards.min().item())
+    reward_max = float(rewards.max().item())
+
+    # Pre-training diagnostic
+    backbone.eval()
+    reward_predictor.eval()
+    with torch.no_grad():
+        initial_embeddings = backbone(contexts)
+        initial_predictions = reward_predictor(initial_embeddings)
+        initial_loss = nn.functional.mse_loss(initial_predictions, rewards).item()
+        initial_mae = float((initial_predictions - rewards).abs().mean().item())
+        initial_emb_norm = float(initial_embeddings.norm(dim=1).mean().item())
+
+    logger.info(
+        "centralized_retrain start: loss=%.4f mae=%.4f emb_norm=%.3f "
+        "(%d tuples, reward_mean=%.3f, reward_std=%.3f, reward_range=[%.3f, %.3f])",
+        initial_loss,
+        initial_mae,
+        initial_emb_norm,
+        n_samples,
+        reward_mean,
+        reward_std,
+        reward_min,
+        reward_max,
+    )
 
     backbone.train()
     reward_predictor.train()
+
+    params = list(backbone.parameters()) + list(reward_predictor.parameters())
     optimizer = optim.Adam(
-        list(backbone.parameters()) + list(reward_predictor.parameters()),
+        params,
         lr=RETRAIN_LR,
+        weight_decay=RETRAIN_WEIGHT_DECAY,
     )
 
-    n = len(tuples)
-    avg_loss = 0.0
-    for _ in range(RETRAIN_EPOCHS):
-        idx = list(range(n))
-        random.shuffle(idx)
-        for start in range(0, n, RETRAIN_BATCH_SIZE):
-            batch = idx[start:start + RETRAIN_BATCH_SIZE]
-            emb = backbone(contexts[batch])
-            pred = reward_predictor(emb)
-            loss = nn.functional.mse_loss(pred, rewards[batch])
+    final_epoch_loss = 0.0
+    final_epoch_mae = 0.0
+    final_grad_norm_pre_clip = 0.0
+
+    for epoch in range(RETRAIN_EPOCHS):
+        indices = list(range(n_samples))
+        rng.shuffle(indices)
+
+        epoch_loss = 0.0
+        epoch_abs_err_sum = 0.0
+        epoch_seen = 0
+        epoch_grad_norm_sum = 0.0
+        n_batches = 0
+
+        for start in range(0, n_samples, RETRAIN_BATCH_SIZE):
+            batch_idx = indices[start : start + RETRAIN_BATCH_SIZE]
+            x_batch = contexts[batch_idx]
+            y_batch = rewards[batch_idx]
+
+            embeddings = backbone(x_batch)
+            predictions = reward_predictor(embeddings)
+            loss = nn.functional.mse_loss(predictions, y_batch)
+
             optimizer.zero_grad()
             loss.backward()
-            optimizer.step()
-            avg_loss = float(loss.item())
 
+            grad_norm_pre_clip = torch.nn.utils.clip_grad_norm_(
+                params, max_norm=RETRAIN_GRAD_CLIP
+            )
+            optimizer.step()
+
+            with torch.no_grad():
+                batch_abs_err = (predictions - y_batch).abs().sum().item()
+                epoch_abs_err_sum += float(batch_abs_err)
+                epoch_seen += y_batch.numel()
+
+            epoch_loss += float(loss.item())
+            epoch_grad_norm_sum += float(grad_norm_pre_clip)
+            n_batches += 1
+
+        final_epoch_loss = epoch_loss / max(n_batches, 1)
+        final_epoch_mae = epoch_abs_err_sum / max(epoch_seen, 1)
+        final_grad_norm_pre_clip = epoch_grad_norm_sum / max(n_batches, 1)
+
+        logger.info(
+            "centralized_retrain epoch %d/%d: loss=%.4f mae=%.4f grad_norm=%.3f "
+            "(%d batches)",
+            epoch + 1,
+            RETRAIN_EPOCHS,
+            final_epoch_loss,
+            final_epoch_mae,
+            final_grad_norm_pre_clip,
+            n_batches,
+        )
+
+    # Post-training summary
     backbone.eval()
     reward_predictor.eval()
-    return avg_loss
+    with torch.no_grad():
+        final_embeddings = backbone(contexts)
+        final_emb_norm = float(final_embeddings.norm(dim=1).mean().item())
+
+    logger.info(
+        "centralized_retrain done: loss %.4f -> %.4f, mae %.4f -> %.4f, "
+        "emb_norm %.3f -> %.3f, avg_grad_norm=%.3f",
+        initial_loss,
+        final_epoch_loss,
+        initial_mae,
+        final_epoch_mae,
+        initial_emb_norm,
+        final_emb_norm,
+        final_grad_norm_pre_clip,
+    )
+
+    return final_epoch_loss
 
 
 def evaluate_backbone_loss(
