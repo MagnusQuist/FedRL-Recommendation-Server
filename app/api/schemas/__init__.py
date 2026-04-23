@@ -7,6 +7,7 @@ from .federated import (
 )
 from .catalogue_snapshot import CatalogueSnapshotResponse
 from .catalogue_version import CatalogueVersionResponse
+from .db_snapshot import DatabaseSnapshotResponse, DatabaseTableSnapshot
 from .product_label_image import (
     PRODUCT_LABEL_EMPTY_VALUE,
     ProductLabelImage,
@@ -52,6 +53,8 @@ __all__ = [
     "CategoryUpdate",
     "CatalogueVersionResponse",
     "CatalogueSnapshotResponse",
+    "DatabaseSnapshotResponse",
+    "DatabaseTableSnapshot",
     "PRODUCT_LABEL_EMPTY_VALUE",
     "ProductLabelImage",
     "product_label_image_stems",

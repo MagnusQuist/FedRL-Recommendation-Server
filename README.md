@@ -206,8 +206,19 @@ All endpoints are mounted under `/api/v1`.
 | `GET` | `/dev/metrics/json` | FL aggregation state snapshot |
 | `WS`  | `/dev/metrics/ws` | Live metrics stream (pushes every 2 s) |
 | `GET` | `/dev/metrics` | HTML dashboard |
+| `GET` | `/dev/db/snapshot` | Database snapshot as JSON response |
+| `GET` | `/dev/db/snapshot/export` | Download database snapshot (`.json` or `.json.gz` with `compress=true`) |
 
 ---
+
+## Snapshot and backup strategy
+
+- Use `/api/v1/dev/db/snapshot` and `/api/v1/dev/db/snapshot/export` for developer inspection and local analysis.
+- For large payloads, use compressed export:
+
+```bash
+curl "http://localhost:8000/api/v1/dev/db/snapshot/export?compress=true" -o db_snapshot.json.gz
+```
 
 ## Federated learning
 
@@ -293,6 +304,8 @@ The persistent pool is fully restored on server restart. The in-memory round buf
 │   └── requirements.txt
 ├── pretrain/                      # Offline backbone pretraining utilities
 ├── .github/workflows/ci.yml       # Lint + build/push to ghcr.io
+├── scripts/
+│   └── pg_dump_backup.sh          # DB-native backup script (pg_dump custom format)
 ├── Dockerfile.server              # Multi-stage server image
 ├── Dockerfile.pretrain            # Pretrain job image
 ├── docker-compose.dev.yml         # Local Postgres + bind-mounted source

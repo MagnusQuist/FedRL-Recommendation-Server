@@ -2,7 +2,7 @@
 
 Expose router modules so callers can do:
 
-    from app.api.routers import catalogue, federated, health, metrics
+    from app.api.routers import catalogue, federated, health, metrics, snapshot
 """
 
-from app.api.routers import catalogue, federated, health, metrics  # noqa: F401
+from app.api.routers import catalogue, federated, health, metrics, snapshot  # noqa: F401
