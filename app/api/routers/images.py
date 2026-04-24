@@ -20,10 +20,10 @@ router.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
 @router.get("/food_item/{food_item_id}")
 def get_food_item_image(food_item_id: str) -> FileResponse:
     """Serve a food item image JPEG from static image directory."""
-    path = _STATIC / "food_item_images" / f"{Path(food_item_id).name}.jpg"
+    path = _STATIC / "food_item_images_optimized" / f"{Path(food_item_id).name}.webp"
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Food item image not found")
-    return FileResponse(path, media_type="image/jpeg", headers=_CACHE)
+    return FileResponse(path, media_type="image/webp", headers=_CACHE)
 
 
 @router.get("/product_label/{label_name}")
