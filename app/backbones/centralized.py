@@ -52,6 +52,7 @@ CLIENTS_PER_ROUND = int(os.getenv("CENTRALIZED_CLIENTS_PER_ROUND", "2"))
 MAX_TUPLE_POOL_SIZE = int(os.getenv("MAX_TUPLE_POOL_SIZE", "2000"))
 
 RETRAIN_LR = 1e-3
+RETRAIN_MOMENTUM = 0.9
 RETRAIN_EPOCHS = 3
 RETRAIN_BATCH_SIZE = 32
 RETRAIN_WEIGHT_DECAY = 1e-4
@@ -211,6 +212,7 @@ def _backbone_to_serialisable(backbone: BackboneEncoder) -> dict:
 def retrain_backbone(
     backbone: BackboneEncoder,
     reward_predictor: RewardPredictor,
+    optimizer: optim.Optimizer,
     tuples: list[dict],
     seed: int | None = None,
 ) -> float:
@@ -259,12 +261,7 @@ def retrain_backbone(
     backbone.train()
     reward_predictor.train()
 
-    params = list(backbone.parameters()) + list(reward_predictor.parameters())
-    optimizer = optim.Adam(
-        params,
-        lr=RETRAIN_LR,
-        weight_decay=RETRAIN_WEIGHT_DECAY,
-    )
+    params = [p for group in optimizer.param_groups for p in group["params"]]
 
     final_epoch_loss = 0.0
     final_epoch_mae = 0.0
@@ -398,6 +395,17 @@ class CentralizedService:
         self.backbone.eval()
         self.reward_predictor.eval()
 
+        # Persistent optimizer — momentum buffers carry across rounds. The
+        # parameter Tensor objects are stable (load_state_dict copies values
+        # in place), so the optimizer keeps tracking the right tensors even
+        # after try_load_persisted_state replaces their values.
+        self._optimizer = optim.SGD(
+            list(self.backbone.parameters()) + list(self.reward_predictor.parameters()),
+            lr=RETRAIN_LR,
+            momentum=RETRAIN_MOMENTUM,
+            weight_decay=RETRAIN_WEIGHT_DECAY,
+        )
+
         # Global heads
         self.item_head = TSItemHead()
         self.price_head = TSPriceHead()
@@ -408,10 +416,11 @@ class CentralizedService:
         self._tuple_pool: list[dict] = []
 
         # Per-round client batch, in memory only (lost on restart, same as
-        # the FL aggregator queue). A round triggers when exactly
-        # ``CLIENTS_PER_ROUND`` unique clients have uploaded.
-        self._pending_clients: set[str] = set()
-        self._pending_tuples: list[dict] = []
+        # the FL aggregator queue). Keyed by ``client_id`` so retries replace
+        # the prior tuples for that client instead of duplicating them.
+        # A round triggers when exactly ``CLIENTS_PER_ROUND`` unique clients
+        # have uploaded.
+        self._pending_uploads: dict[str, list[dict]] = {}
 
         # Versioning
         self.model_version: int = 0
@@ -565,36 +574,56 @@ class CentralizedService:
         tuples = decode_tuples(data)
 
         async with self._lock:
-            self._pending_clients.add(client_id)
-            self._pending_tuples.extend(tuples)
+            # Stamp each tuple with the server's current model version at upload
+            # time so analyses can correlate tuples with the policy regime that
+            # received them. Lives inside tuple_pool_blob — no schema change.
+            stamp_version = self.model_version
+            for t in tuples:
+                t["model_version_at_upload"] = stamp_version
 
-            queued = len(self._pending_clients)
+            if client_id in self._pending_uploads:
+                logger.warning(
+                    "Centralized: client '%s' re-uploaded before round triggered — "
+                    "replacing %d previously buffered tuples with %d new tuples.",
+                    client_id,
+                    len(self._pending_uploads[client_id]),
+                    len(tuples),
+                )
+            self._pending_uploads[client_id] = tuples
+
+            queued = len(self._pending_uploads)
+            buffered_total = sum(len(v) for v in self._pending_uploads.values())
             logger.info(
                 "Centralized: buffered %d tuples from '%s' — %d/%d clients ready "
-                "(round_buffered_tuples=%d)",
+                "(round_buffered_tuples=%d, stamp_version=%d)",
                 len(tuples),
                 client_id,
                 queued,
                 CLIENTS_PER_ROUND,
-                len(self._pending_tuples),
+                buffered_total,
+                stamp_version,
             )
 
             triggered = queued == CLIENTS_PER_ROUND
             if triggered:
                 await self._run_training_round()
 
-            return self.model_version, triggered, len(self._pending_clients)
+            return self.model_version, triggered, len(self._pending_uploads)
 
     async def _run_training_round(self) -> None:
         """
-        Merge the round's buffered tuples into the persistent pool, retrain
-        the backbone on the full pool, apply head updates for the round's
-        tuples, bump ``model_version``, persist, and clear the round buffer.
+        Merge the round's buffered tuples into the persistent pool, apply
+        head updates using the *pre-retrain* backbone (which is the policy
+        these tuples were observed under), retrain the backbone on the full
+        pool, evaluate honest pre/post-training MSE on the full pool, bump
+        ``model_version``, persist, and clear the round buffer.
 
         Must be called with ``self._lock`` held.
         """
-        batch_tuples = self._pending_tuples
-        batch_clients = len(self._pending_clients)
+        batch_clients = len(self._pending_uploads)
+        batch_tuples: list[dict] = []
+        for tuples in self._pending_uploads.values():
+            batch_tuples.extend(tuples)
 
         if not batch_tuples:
             logger.warning(
@@ -602,14 +631,14 @@ class CentralizedService:
                 "(clients=%d) — skipping retrain.",
                 batch_clients,
             )
-            self._pending_clients.clear()
-            self._pending_tuples = []
+            self._pending_uploads = {}
             return
 
         self._tuple_pool.extend(batch_tuples)
         if len(self._tuple_pool) > MAX_TUPLE_POOL_SIZE:
             self._tuple_pool = self._tuple_pool[-MAX_TUPLE_POOL_SIZE:]
 
+        # Honest pre-training MSE on the full pool, eval mode.
         loss_before = evaluate_backbone_loss(
             self.backbone,
             self.reward_predictor,
@@ -622,16 +651,33 @@ class CentralizedService:
         round_started_cpu = time.process_time()
         tracemalloc.start()
 
-        # Retrain the backbone
-        loss = await asyncio.to_thread(
-            retrain_backbone, self.backbone, self.reward_predictor, self._tuple_pool
-        )
-
-        # Apply head updates
+        # Apply head updates BEFORE retraining: the (A, b) statistics belong in
+        # the embedding space of the backbone the clients actually used to
+        # generate these tuples (i.e., the pre-retrain server backbone), not
+        # the freshly retrained one.
         for t in batch_tuples:
             apply_tuple_to_heads(
                 self.backbone, self.item_head, self.price_head, self.nudge_head, t
             )
+
+        # Retrain the backbone using the persistent optimizer (momentum buffers
+        # carry across rounds — no fresh-optimizer kick on every round).
+        train_loss_last_epoch = await asyncio.to_thread(
+            retrain_backbone,
+            self.backbone,
+            self.reward_predictor,
+            self._optimizer,
+            self._tuple_pool,
+        )
+
+        # Honest post-training MSE on the full pool, eval mode. Directly
+        # comparable to ``loss_before``; ``train_loss_last_epoch`` is kept only
+        # as an in-training diagnostic.
+        loss_after = evaluate_backbone_loss(
+            self.backbone,
+            self.reward_predictor,
+            self._tuple_pool,
+        )
 
         # Get metrics
         _, peak_memory_bytes = tracemalloc.get_traced_memory()
@@ -645,7 +691,7 @@ class CentralizedService:
             (elapsed_cpu / elapsed_wall) * 100 if elapsed_wall > 0 else 0.0
         )
         memory_usage_mb = peak_memory_bytes / (1024 * 1024)
-        loss_delta = float(loss - loss_before)
+        loss_delta = float(loss_after - loss_before)
 
         # Persist to database
         model_version_before = self.model_version
@@ -653,13 +699,13 @@ class CentralizedService:
         await self._persist_to_db(
             client_count=batch_clients,
             num_interactions=len(batch_tuples),
-            contributing_client_ids=sorted(self._pending_clients),
+            contributing_client_ids=sorted(self._pending_uploads.keys()),
             training_duration_ms=training_duration_ms,
             model_version_before=model_version_before,
             cpu_usage_percentage=cpu_usage_percentage,
             memory_usage_mb=memory_usage_mb,
             loss_before=loss_before,
-            loss_after=loss,
+            loss_after=loss_after,
             loss_delta=loss_delta,
             timestamp=round_started_at,
         )
@@ -668,19 +714,22 @@ class CentralizedService:
         self._rounds_completed += 1
         logger.info(
             "Centralized training round complete — version=%d clients=%d "
-            "round_tuples=%d pool_size=%d loss=%.6f training_duration_ms=%d "
+            "round_tuples=%d pool_size=%d loss_before=%.6f loss_after=%.6f "
+            "loss_delta=%+.6f train_loss_last_epoch=%.6f training_duration_ms=%d "
             "rounds_completed=%d",
             self.model_version,
             batch_clients,
             len(batch_tuples),
             len(self._tuple_pool),
-            loss,
+            loss_before,
+            loss_after,
+            loss_delta,
+            train_loss_last_epoch,
             training_duration_ms,
             self._rounds_completed,
         )
 
-        self._pending_clients.clear()
-        self._pending_tuples = []
+        self._pending_uploads = {}
 
     # ── Model serialisation for GET endpoint ───────────────────────────────
 

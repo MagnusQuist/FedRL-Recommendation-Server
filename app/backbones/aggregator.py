@@ -1,19 +1,6 @@
 """
 FL Aggregation Service
 ======================
-Manages in-memory upload queues and executes FedAvg rounds for the federated
-backbone.
-
-Design decisions reflected here:
-- Uploads are queued in memory and keyed by client_id.
-- If the same client uploads twice before a round triggers, the newer upload
-  replaces the older one (queue size does not grow).
-- A round triggers when exactly ``FL_MIN_CLIENTS_PER_ROUND`` unique clients
-  have uploaded. There is no timeout — strict batch semantics, so the FL round
-  and the centralized training batch share an identical client-count constraint
-  (fair experimental comparison).
-- FedAvg: w* = Σ (n_k / n_total) * w_k — pure NumPy, no PyTorch required.
-- The aggregated backbone is persisted to PostgreSQL with monotonic versioning.
 """
 
 from __future__ import annotations
@@ -40,7 +27,16 @@ from app.logger import logger
 # ---------------------------------------------------------------------------
 # Configuration — overridable via environment variables
 # ---------------------------------------------------------------------------
-CLIENTS_PER_ROUND = int(os.getenv("FEDERATED_CLIENTS_PER_ROUND", "2"))
+# K — buffer size; once this many client uploads are queued, a FedBuff round runs.
+CLIENTS_PER_ROUND = int(os.getenv("FEDERATED_CLIENTS_PER_ROUND", "3"))
+
+# η_g — server learning rate applied to the aggregated delta.
+# w^{t+1} = w^t − η_g · Δ̄^t.  1.0 reproduces "apply the averaged delta as-is".
+SERVER_LR = float(os.getenv("FEDERATED_SERVER_LR", "1.0"))
+
+# α — staleness scaling exponent. s(τ) = 1 / (1 + τ)^α.
+# 0.5 matches the FedBuff paper; set to 0 to disable staleness scaling.
+STALENESS_ALPHA = float(os.getenv("FEDERATED_STALENESS_ALPHA", "0.5"))
 
 
 # ---------------------------------------------------------------------------
@@ -58,25 +54,76 @@ class QueuedUpload:
 # ---------------------------------------------------------------------------
 # Pure CPU-bound helpers (safe to run in a worker thread)
 # ---------------------------------------------------------------------------
-def _fedavg_and_serialize(
-    eligible: list[QueuedUpload], n_total: int
+def _fedbuff_and_serialize(
+    current_weights: dict[str, np.ndarray],
+    eligible: list[QueuedUpload],
+    base_weights_by_version: dict[int, dict[str, np.ndarray]],
+    current_version: int,
+    server_lr: float,
+    staleness_alpha: float,
 ) -> str:
     """
-    Execute FedAvg over ``eligible`` uploads and return the gzip+base64 blob
-    suitable for direct insertion into ``FederatedModel.weights_blob``.
+    Buffered asynchronous aggregation (FedBuff) with hybrid n_k × staleness
+    weighting, returning the gzip+base64 blob for ``FederatedModel.weights_blob``.
+
+    For each client i in the buffer:
+        Δ_i = w_base_i − w_local_i               (server-computed delta)
+        τ_i = max(0, current_version − backbone_version_i)
+        s_i = (1 / (1 + τ_i)^α) · n_i            (hybrid weight)
+
+    Aggregate:  Δ̄ = Σ s_i · Δ_i / Σ s_i
+    Apply:      w^{t+1} = w^t − η_g · Δ̄
     """
-    aggregated: dict[str, np.ndarray] = {}
-    param_keys = list(eligible[0].weights.keys())
+    param_keys = list(current_weights.keys())
 
+    weighted_deltas: list[tuple[float, dict[str, np.ndarray]]] = []
+    weight_sum = 0.0
+    for u in eligible:
+        base = base_weights_by_version[u.backbone_version]
+        tau = max(0, current_version - u.backbone_version)
+        scale = (1.0 / (1.0 + tau) ** staleness_alpha) * float(u.interaction_count)
+        delta = {k: base[k] - u.weights[k] for k in param_keys}
+        weighted_deltas.append((scale, delta))
+        weight_sum += scale
+
+    if weight_sum <= 0:
+        raise ValueError("FedBuff weight normalizer is non-positive.")
+
+    avg_delta: dict[str, np.ndarray] = {}
     for key in param_keys:
-        aggregated[key] = sum(
-            (u.interaction_count / n_total) * u.weights[key]
-            for u in eligible
-        )
+        accum = np.zeros_like(current_weights[key])
+        for scale, delta in weighted_deltas:
+            accum += scale * delta[key]
+        avg_delta[key] = accum / weight_sum
 
-    weights_json = {k: v.tolist() for k, v in aggregated.items()}
+    new_weights = {
+        k: current_weights[k] - server_lr * avg_delta[k] for k in param_keys
+    }
+
+    weights_json = {k: v.tolist() for k, v in new_weights.items()}
     compressed = gzip.compress(json.dumps(weights_json).encode("utf-8"))
     return base64.b64encode(compressed).decode("utf-8")
+
+
+def _decode_blob_to_arrays(blob: str) -> dict[str, np.ndarray]:
+    """Decode a persisted weights blob into a dict of numpy arrays."""
+    decoded = decode_backbone_blob(blob)
+    return {k: np.array(v, dtype=np.float32) for k, v in decoded.items()}
+
+
+async def _load_versions_weights(
+    db: AsyncSession, versions: set[int]
+) -> dict[int, dict[str, np.ndarray]]:
+    """
+    Fetch and decode persisted weights for the given set of model versions.
+    Versions absent from the DB are simply omitted from the returned dict.
+    """
+    if not versions:
+        return {}
+    result = await db.execute(
+        select(FederatedModel).where(FederatedModel.version.in_(versions))
+    )
+    return {row.version: _decode_blob_to_arrays(row.weights_blob) for row in result.scalars()}
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +134,7 @@ class FLAggregator:
         self._queue: dict[str, QueuedUpload] = {}
         self._rounds_completed: int = 0
         # Cached latest persisted version. Updated on startup via
-        # ``try_load_persisted_state`` and after every successful FedAvg round.
+        # ``try_load_persisted_state`` and after every successful FedBuff round.
         self.model_version: int = 0
         self._lock = asyncio.Lock()
 
@@ -143,7 +190,7 @@ class FLAggregator:
         Add or replace a client's upload in the queue.
 
         Returns ``(round_triggered, queued_client_count)``. If a round triggers,
-        FedAvg is run and the result persisted to Postgres.
+        FedBuff is run and the result persisted to Postgres.
         """
         weights = {k: np.array(v, dtype=np.float32) for k, v in weights_dict.items()}
 
@@ -176,7 +223,7 @@ class FLAggregator:
 
             triggered = queued == CLIENTS_PER_ROUND
             if triggered:
-                await self._run_fedavg(db)
+                await self._run_fedbuff(db)
 
             return triggered, len(self._queue)
 
@@ -236,40 +283,81 @@ class FLAggregator:
         latest = await self.get_current_version(db)
         return 1 if latest is None else latest.version + 1
 
-    async def _run_fedavg(self, db: AsyncSession) -> None:
+    async def _run_fedbuff(self, db: AsyncSession) -> None:
         """
-        Execute FedAvg over all queued uploads and persist the result.
+        Buffered asynchronous aggregation (FedBuff) with hybrid n_k × staleness
+        weighting:
 
-        w* = Σ (n_k / n_total) * w_k
+            Δ_i = w_base_i − w_local_i
+            s_i = (1 / (1 + τ_i)^α) · n_i
+            Δ̄  = Σ s_i · Δ_i / Σ s_i
+            w^{t+1} = w^t − η_g · Δ̄
         """
         if not self._queue:
-            logger.warning("FedAvg triggered but queue is empty.")
+            logger.warning("FedBuff triggered but queue is empty.")
             return
 
         eligible = list(self._queue.values())
-        n_total = sum(u.interaction_count for u in eligible)
 
-        if n_total <= 0:
-            logger.warning(
-                "FedAvg aborted because total interactions is %d.",
-                n_total,
-            )
+        # Server-side delta computation requires the current global model and the
+        # base-version weights each client trained against.
+        current_model = await self.get_current_version(db)
+        if current_model is None:
+            logger.error("FedBuff aborted — no global model exists yet.")
             return
 
-        # Optional safety check: all uploads should target the same backbone version.
-        base_versions = {u.backbone_version for u in eligible}
-        if len(base_versions) > 1:
-            logger.warning(
-                "FedAvg includes mixed base versions: %s",
-                sorted(base_versions),
-            )
+        current_version = current_model.version
+        current_weights = _decode_blob_to_arrays(current_model.weights_blob)
 
-        # Offload the CPU-bound reduce + gzip + base64 to a worker thread,
-        # backbone retraining in ``asyncio.to_thread``. Keeps the API event
-        # loop responsive when a round is triggered.
+        base_versions_needed = {u.backbone_version for u in eligible}
+        base_weights_by_version = await _load_versions_weights(db, base_versions_needed)
+
+        missing_versions = base_versions_needed - base_weights_by_version.keys()
+        if missing_versions:
+            logger.warning(
+                "FedBuff dropping uploads with missing base versions: %s",
+                sorted(missing_versions),
+            )
+            eligible = [u for u in eligible if u.backbone_version in base_weights_by_version]
+
+        if not eligible:
+            logger.error("FedBuff aborted — no eligible uploads after base-version check.")
+            return
+
+        n_total = sum(u.interaction_count for u in eligible)
+        if n_total <= 0:
+            logger.warning("FedBuff aborted because total interactions is %d.", n_total)
+            return
+
+        # Staleness telemetry — useful for the experiment writeup.
+        stalenesses = [
+            max(0, current_version - u.backbone_version) for u in eligible
+        ]
+        mean_staleness = sum(stalenesses) / len(stalenesses)
+        max_staleness = max(stalenesses)
+        logger.info(
+            "FedBuff staleness — current_version=%d mean=%.2f max=%d distribution=%s",
+            current_version,
+            mean_staleness,
+            max_staleness,
+            stalenesses,
+        )
+
+        base_versions = {u.backbone_version for u in eligible}
+
+        # Offload the CPU-bound reduce + gzip + base64 to a worker thread to keep
+        # the API event loop responsive when a round is triggered.
         aggregation_started_at = datetime.now(timezone.utc)
         aggregation_started_perf = time.perf_counter()
-        blob = await asyncio.to_thread(_fedavg_and_serialize, eligible, n_total)
+        blob = await asyncio.to_thread(
+            _fedbuff_and_serialize,
+            current_weights,
+            eligible,
+            base_weights_by_version,
+            current_version,
+            SERVER_LR,
+            STALENESS_ALPHA,
+        )
         aggregation_duration_ms = int(
             round((time.perf_counter() - aggregation_started_perf) * 1000)
         )
@@ -321,11 +409,16 @@ class FLAggregator:
         self.model_version = new_backbone.version
         self._rounds_completed += 1
         logger.info(
-            "FedAvg round complete — version=%d clients=%d interactions=%d "
+            "FedBuff round complete — version=%d clients=%d interactions=%d "
+            "mean_staleness=%.2f max_staleness=%d server_lr=%.3f staleness_alpha=%.3f "
             "aggregation_duration_ms=%d rounds_completed=%d",
             new_backbone.version,
             len(eligible),
             n_total,
+            mean_staleness,
+            max_staleness,
+            SERVER_LR,
+            STALENESS_ALPHA,
             aggregation_duration_ms,
             self._rounds_completed,
         )

@@ -101,7 +101,7 @@ async def centralized_training_status(
     """Returns the current state of the centralized training queue."""
     return CentralizedTrainingStatus(
         current_version=service.model_version,
-        queued_clients=len(service._pending_clients),
+        queued_clients=len(service._pending_uploads),
         total_rounds_completed=service._rounds_completed,
         pool_size=len(service._tuple_pool),
         clients_per_round=CENTRALIZED_CLIENTS_PER_ROUND,
