@@ -361,6 +361,20 @@ def evaluate_backbone_loss(
     return float(loss.item())
 
 
+def _reward_stats(tuples: list[dict]) -> dict[str, float]:
+    """Per-slice reward distribution summary. Returns zeros for empty input."""
+    if not tuples:
+        return {"mean": 0.0, "std": 0.0, "min": 0.0, "max": 0.0, "n": 0}
+    arr = np.asarray([t["reward"] for t in tuples], dtype=np.float32)
+    return {
+        "mean": float(arr.mean()),
+        "std": float(arr.std()),
+        "min": float(arr.min()),
+        "max": float(arr.max()),
+        "n": int(arr.size),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Head update — apply one tuple to the global heads
 # ---------------------------------------------------------------------------
@@ -634,6 +648,12 @@ class CentralizedService:
             self._pending_uploads = {}
             return
 
+        # Snapshot the pool the previous round trained on, before extending it
+        # with this round's new tuples. Lets us compute the split-eval
+        # diagnostic: how does the pre-retrain model do on the data it has
+        # already seen vs the data it hasn't?
+        existing_pool = list(self._tuple_pool)
+
         self._tuple_pool.extend(batch_tuples)
         if len(self._tuple_pool) > MAX_TUPLE_POOL_SIZE:
             self._tuple_pool = self._tuple_pool[-MAX_TUPLE_POOL_SIZE:]
@@ -643,6 +663,38 @@ class CentralizedService:
             self.backbone,
             self.reward_predictor,
             self._tuple_pool,
+        )
+
+        # Diagnostic split-eval to discriminate between "model has converged
+        # on the pool" and "new data is out-of-distribution for the model".
+        # If loss_pre_new >> loss_pre_existing, the new tuples are harder than
+        # what the model has seen — i.e., distribution shift, not optimizer.
+        loss_pre_existing = evaluate_backbone_loss(
+            self.backbone, self.reward_predictor, existing_pool,
+        )
+        loss_pre_new = evaluate_backbone_loss(
+            self.backbone, self.reward_predictor, batch_tuples,
+        )
+
+        # Reward distribution per slice — shifts here directly raise the
+        # MSE floor regardless of model quality.
+        reward_existing = _reward_stats(existing_pool)
+        reward_new = _reward_stats(batch_tuples)
+
+        logger.info(
+            "Centralized round diagnostics — pool_size=%d existing=%d new=%d "
+            "loss_pre_existing=%.6f loss_pre_new=%.6f "
+            "reward_existing(mean=%.3f std=%.3f range=[%.3f, %.3f]) "
+            "reward_new(mean=%.3f std=%.3f range=[%.3f, %.3f])",
+            len(self._tuple_pool),
+            reward_existing["n"],
+            reward_new["n"],
+            loss_pre_existing,
+            loss_pre_new,
+            reward_existing["mean"], reward_existing["std"],
+            reward_existing["min"], reward_existing["max"],
+            reward_new["mean"], reward_new["std"],
+            reward_new["min"], reward_new["max"],
         )
 
         # Start timing
