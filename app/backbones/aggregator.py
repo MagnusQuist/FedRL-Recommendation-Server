@@ -211,17 +211,20 @@ class FLAggregator:
                 interaction_count,
             )
 
-            # The lock guarantees we never jump from N-1 to N+1: every enqueue
-            # increments by 1 or replaces an existing entry, and the check
-            # happens before the next enqueue can run. Any queue size above N
-            # indicates a programmer error.
-            assert queued <= CLIENTS_PER_ROUND, (
-                f"Federated queue overshot the configured batch size: "
-                f"{queued} > {CLIENTS_PER_ROUND}. This should be impossible "
-                "with the aggregator lock held."
-            )
+            # Under normal operation, ``_run_fedbuff`` drains the queue every
+            # time it runs (try/finally), so size never exceeds K. If we ever
+            # do see an overshoot it points at a queue-management bug — log it
+            # loudly and drain anyway rather than 500-ing every subsequent
+            # client upload.
+            if queued > CLIENTS_PER_ROUND:
+                logger.error(
+                    "Federated queue size %d exceeds configured K=%d — "
+                    "draining all queued uploads in this round.",
+                    queued,
+                    CLIENTS_PER_ROUND,
+                )
 
-            triggered = queued == CLIENTS_PER_ROUND
+            triggered = queued >= CLIENTS_PER_ROUND
             if triggered:
                 await self._run_fedbuff(db)
 
@@ -297,133 +300,140 @@ class FLAggregator:
             logger.warning("FedBuff triggered but queue is empty.")
             return
 
-        eligible = list(self._queue.values())
+        # Always drain the queue once a round attempt has started, even if
+        # the round aborts early or raises. Preserving uploads across a
+        # failed attempt means the next enqueue sees an over-full queue and
+        # the assertion / overshoot path keeps firing on every subsequent
+        # request. Lost uploads on failure are unavoidable; queue corruption
+        # is worse.
+        try:
+            eligible = list(self._queue.values())
 
-        # Server-side delta computation requires the current global model and the
-        # base-version weights each client trained against.
-        current_model = await self.get_current_version(db)
-        if current_model is None:
-            logger.error("FedBuff aborted — no global model exists yet.")
-            return
+            # Server-side delta computation requires the current global model and the
+            # base-version weights each client trained against.
+            current_model = await self.get_current_version(db)
+            if current_model is None:
+                logger.error("FedBuff aborted — no global model exists yet.")
+                return
 
-        current_version = current_model.version
-        current_weights = _decode_blob_to_arrays(current_model.weights_blob)
+            current_version = current_model.version
+            current_weights = _decode_blob_to_arrays(current_model.weights_blob)
 
-        base_versions_needed = {u.backbone_version for u in eligible}
-        base_weights_by_version = await _load_versions_weights(db, base_versions_needed)
+            base_versions_needed = {u.backbone_version for u in eligible}
+            base_weights_by_version = await _load_versions_weights(db, base_versions_needed)
 
-        missing_versions = base_versions_needed - base_weights_by_version.keys()
-        if missing_versions:
-            logger.warning(
-                "FedBuff dropping uploads with missing base versions: %s",
-                sorted(missing_versions),
+            missing_versions = base_versions_needed - base_weights_by_version.keys()
+            if missing_versions:
+                logger.warning(
+                    "FedBuff dropping uploads with missing base versions: %s",
+                    sorted(missing_versions),
+                )
+                eligible = [u for u in eligible if u.backbone_version in base_weights_by_version]
+
+            if not eligible:
+                logger.error("FedBuff aborted — no eligible uploads after base-version check.")
+                return
+
+            n_total = sum(u.interaction_count for u in eligible)
+            if n_total <= 0:
+                logger.warning("FedBuff aborted because total interactions is %d.", n_total)
+                return
+
+            # Staleness telemetry — useful for the experiment writeup.
+            stalenesses = [
+                max(0, current_version - u.backbone_version) for u in eligible
+            ]
+            mean_staleness = sum(stalenesses) / len(stalenesses)
+            max_staleness = max(stalenesses)
+            logger.info(
+                "FedBuff staleness — current_version=%d mean=%.2f max=%d distribution=%s",
+                current_version,
+                mean_staleness,
+                max_staleness,
+                stalenesses,
             )
-            eligible = [u for u in eligible if u.backbone_version in base_weights_by_version]
 
-        if not eligible:
-            logger.error("FedBuff aborted — no eligible uploads after base-version check.")
-            return
+            base_versions = {u.backbone_version for u in eligible}
 
-        n_total = sum(u.interaction_count for u in eligible)
-        if n_total <= 0:
-            logger.warning("FedBuff aborted because total interactions is %d.", n_total)
-            return
-
-        # Staleness telemetry — useful for the experiment writeup.
-        stalenesses = [
-            max(0, current_version - u.backbone_version) for u in eligible
-        ]
-        mean_staleness = sum(stalenesses) / len(stalenesses)
-        max_staleness = max(stalenesses)
-        logger.info(
-            "FedBuff staleness — current_version=%d mean=%.2f max=%d distribution=%s",
-            current_version,
-            mean_staleness,
-            max_staleness,
-            stalenesses,
-        )
-
-        base_versions = {u.backbone_version for u in eligible}
-
-        # Offload the CPU-bound reduce + gzip + base64 to a worker thread to keep
-        # the API event loop responsive when a round is triggered.
-        aggregation_started_at = datetime.now(timezone.utc)
-        aggregation_started_perf = time.perf_counter()
-        blob = await asyncio.to_thread(
-            _fedbuff_and_serialize,
-            current_weights,
-            eligible,
-            base_weights_by_version,
-            current_version,
-            SERVER_LR,
-            STALENESS_ALPHA,
-        )
-        aggregation_duration_ms = int(
-            round((time.perf_counter() - aggregation_started_perf) * 1000)
-        )
-
-        model_version_before = (
-            str(base_versions.pop())
-            if len(base_versions) == 1
-            else ",".join(str(version) for version in sorted(base_versions))
-        )
-        next_version = await self._next_version(db)
-
-        new_backbone = FederatedModel(
-            version=next_version,
-            weights_blob=blob,
-        )
-        db.add(new_backbone)
-        await db.flush()
-
-        db.add(
-            AggregationEvent(
-                timestamp=aggregation_started_at,
-                aggregation_duration_ms=aggregation_duration_ms,
-                participating_clients_ids=[upload.client_id for upload in eligible],
-                num_clients_in_round=len(eligible),
-                total_interactions=n_total,
-                model_version_before=model_version_before,
-                model_version_after=str(next_version),
-                model_size_bytes=len(blob.encode("utf-8")),
-                logged_at=datetime.now(timezone.utc),
+            # Offload the CPU-bound reduce + gzip + base64 to a worker thread to keep
+            # the API event loop responsive when a round is triggered.
+            aggregation_started_at = datetime.now(timezone.utc)
+            aggregation_started_perf = time.perf_counter()
+            blob = await asyncio.to_thread(
+                _fedbuff_and_serialize,
+                current_weights,
+                eligible,
+                base_weights_by_version,
+                current_version,
+                SERVER_LR,
+                STALENESS_ALPHA,
             )
-        )
+            aggregation_duration_ms = int(
+                round((time.perf_counter() - aggregation_started_perf) * 1000)
+            )
 
-        logger.info(
-            "Aggregation event logged: version=%d aggregation_duration_ms=%d "
-            "num_clients_in_round=%d total_interactions=%d "
-            "model_version_before=%s model_version_after=%s model_size_bytes=%d",
-            next_version,
-            aggregation_duration_ms,
-            len(eligible),
-            n_total,
-            model_version_before,
-            str(next_version),
-            len(blob.encode("utf-8")),
-        )
+            model_version_before = (
+                str(base_versions.pop())
+                if len(base_versions) == 1
+                else ",".join(str(version) for version in sorted(base_versions))
+            )
+            next_version = await self._next_version(db)
 
-        await db.commit()
-        await db.refresh(new_backbone)
+            new_backbone = FederatedModel(
+                version=next_version,
+                weights_blob=blob,
+            )
+            db.add(new_backbone)
+            await db.flush()
 
-        self.model_version = new_backbone.version
-        self._rounds_completed += 1
-        logger.info(
-            "FedBuff round complete — version=%d clients=%d interactions=%d "
-            "mean_staleness=%.2f max_staleness=%d server_lr=%.3f staleness_alpha=%.3f "
-            "aggregation_duration_ms=%d rounds_completed=%d",
-            new_backbone.version,
-            len(eligible),
-            n_total,
-            mean_staleness,
-            max_staleness,
-            SERVER_LR,
-            STALENESS_ALPHA,
-            aggregation_duration_ms,
-            self._rounds_completed,
-        )
+            db.add(
+                AggregationEvent(
+                    timestamp=aggregation_started_at,
+                    aggregation_duration_ms=aggregation_duration_ms,
+                    participating_clients_ids=[upload.client_id for upload in eligible],
+                    num_clients_in_round=len(eligible),
+                    total_interactions=n_total,
+                    model_version_before=model_version_before,
+                    model_version_after=str(next_version),
+                    model_size_bytes=len(blob.encode("utf-8")),
+                    logged_at=datetime.now(timezone.utc),
+                )
+            )
 
-        self._queue.clear()
+            logger.info(
+                "Aggregation event logged: version=%d aggregation_duration_ms=%d "
+                "num_clients_in_round=%d total_interactions=%d "
+                "model_version_before=%s model_version_after=%s model_size_bytes=%d",
+                next_version,
+                aggregation_duration_ms,
+                len(eligible),
+                n_total,
+                model_version_before,
+                str(next_version),
+                len(blob.encode("utf-8")),
+            )
+
+            await db.commit()
+            await db.refresh(new_backbone)
+
+            self.model_version = new_backbone.version
+            self._rounds_completed += 1
+            logger.info(
+                "FedBuff round complete — version=%d clients=%d interactions=%d "
+                "mean_staleness=%.2f max_staleness=%d server_lr=%.3f staleness_alpha=%.3f "
+                "aggregation_duration_ms=%d rounds_completed=%d",
+                new_backbone.version,
+                len(eligible),
+                n_total,
+                mean_staleness,
+                max_staleness,
+                SERVER_LR,
+                STALENESS_ALPHA,
+                aggregation_duration_ms,
+                self._rounds_completed,
+            )
+        finally:
+            self._queue.clear()
 
 
 def decode_backbone_blob(blob: str) -> dict[str, list]:
