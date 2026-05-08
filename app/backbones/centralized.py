@@ -51,9 +51,9 @@ from app.logger import logger
 CLIENTS_PER_ROUND = int(os.getenv("CENTRALIZED_CLIENTS_PER_ROUND", "2"))
 MAX_TUPLE_POOL_SIZE = int(os.getenv("MAX_TUPLE_POOL_SIZE", "2000"))
 
-RETRAIN_LR = 1e-3
-RETRAIN_MOMENTUM = 0.9
-RETRAIN_EPOCHS = 3
+RETRAIN_LR_BACKBONE = 3e-4
+RETRAIN_LR_PREDICTOR = 1e-4   # lower so backbone gets proportionally more signal
+RETRAIN_EPOCHS = 10
 RETRAIN_BATCH_SIZE = 32
 RETRAIN_WEIGHT_DECAY = 1e-4
 RETRAIN_GRAD_CLIP = 1.0
@@ -85,7 +85,7 @@ class BackboneEncoder(nn.Module):
 class RewardPredictor(nn.Module):
     def __init__(self, input_dim: int = 32):
         super().__init__()
-        self.net = nn.Sequential(nn.Linear(input_dim, 1))
+        self.net = nn.Linear(input_dim, 1)
 
     def forward(self, x):
         return self.net(x)
@@ -409,14 +409,15 @@ class CentralizedService:
         self.backbone.eval()
         self.reward_predictor.eval()
 
-        # Persistent optimizer — momentum buffers carry across rounds. The
+        # Persistent Adam optimizer — m/v buffers carry across rounds. The
         # parameter Tensor objects are stable (load_state_dict copies values
         # in place), so the optimizer keeps tracking the right tensors even
         # after try_load_persisted_state replaces their values.
-        self._optimizer = optim.SGD(
-            list(self.backbone.parameters()) + list(self.reward_predictor.parameters()),
-            lr=RETRAIN_LR,
-            momentum=RETRAIN_MOMENTUM,
+        self._optimizer = optim.Adam(
+            [
+                {"params": self.backbone.parameters(), "lr": RETRAIN_LR_BACKBONE},
+                {"params": self.reward_predictor.parameters(), "lr": RETRAIN_LR_PREDICTOR},
+            ],
             weight_decay=RETRAIN_WEIGHT_DECAY,
         )
 
@@ -471,9 +472,13 @@ class CentralizedService:
             self.backbone.load_state_dict(sd)
             self.backbone.eval()
 
-            # Reward predictor
+            # Reward predictor — remap legacy keys (net.0.* → net.*) produced
+            # when net was nn.Sequential instead of nn.Linear.
             rp_data = _decode(row.reward_predictor_blob)
-            rp_sd = {k: torch.tensor(v, dtype=torch.float32) for k, v in rp_data.items()}
+            rp_sd = {
+                k.replace("net.0.", "net.", 1): torch.tensor(v, dtype=torch.float32)
+                for k, v in rp_data.items()
+            }
             self.reward_predictor.load_state_dict(rp_sd)
             self.reward_predictor.eval()
 
@@ -790,9 +795,16 @@ class CentralizedService:
         Build the response payload for GET /centralized/model.
         """
         backbone_dict = _backbone_to_serialisable(self.backbone)
+
+        reward_predictor_dict = {
+            k: v.tolist()
+            for k, v in self.reward_predictor.state_dict().items()
+        }
+        
         return {
             "version": self.model_version,
             "backbone_weights": _encode(backbone_dict),
+            "reward_predictor_weights": _encode(reward_predictor_dict),
             "head_weights": {
                 "item": _encode(self.item_head.state_dict()),
                 "price": _encode(self.price_head.state_dict()),
