@@ -212,3 +212,7 @@ food_item_sorting/
 
 # SSH keys used for scp/ssh to the fedrl-clients EC2
 *.pem
+
+# Load test results
+load-test/results/
+server_urls.json
