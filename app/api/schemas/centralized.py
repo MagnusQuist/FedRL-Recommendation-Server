@@ -84,6 +84,10 @@ class CentralizedModelDownload(BaseModel):
         ...,
         description="gzip+base64 encoded backbone state dict.",
     )
+    reward_predictor_weights: str = Field(
+        ...,
+        description="gzip+base64 encoded reward predictor state dict.",
+    )
     head_weights: dict[str, str] = Field(
         ...,
         description="Per-head gzip+base64 encoded state dicts (item, price, nudge).",
