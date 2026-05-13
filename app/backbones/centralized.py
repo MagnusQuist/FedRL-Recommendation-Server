@@ -51,13 +51,13 @@ from app.logger import logger
 CLIENTS_PER_ROUND = int(os.getenv("CENTRALIZED_CLIENTS_PER_ROUND", "2"))
 MAX_TUPLE_POOL_SIZE = int(os.getenv("MAX_TUPLE_POOL_SIZE", "2000"))
 
-RETRAIN_LR_BACKBONE = 3e-4
-RETRAIN_LR_PREDICTOR = 1e-4   # lower so backbone gets proportionally more signal
-RETRAIN_EPOCHS = 10
-RETRAIN_BATCH_SIZE = 32
-RETRAIN_WEIGHT_DECAY = 1e-4
+RETRAIN_LR_BACKBONE = 1e-4
+RETRAIN_LR_PREDICTOR = 1e-3   # lower so backbone gets proportionally more signal
+RETRAIN_EPOCHS = 5
+RETRAIN_BATCH_SIZE = 64
+RETRAIN_WEIGHT_DECAY = 0.0
 RETRAIN_GRAD_CLIP = 1.0
-CTX_PRICE_DELTA = 2  # index 2 in the 18-dim context vector
+CTX_PRICE_DELTA = 2  # index 2 in the context vector (unchanged by extension)
 
 NUDGE_TYPES = ["N1", "N2", "N3", "N4", "N5", "N6"]
 
@@ -66,7 +66,7 @@ NUDGE_TYPES = ["N1", "N2", "N3", "N4", "N5", "N6"]
 # Model architectures (exact copies of client-side models)
 # ---------------------------------------------------------------------------
 class BackboneEncoder(nn.Module):
-    def __init__(self, input_dim: int = 18, latent_dim: int = 32):
+    def __init__(self, input_dim: int = 21, latent_dim: int = 32):
         super().__init__()
         self.backbone = nn.Sequential(
             nn.Linear(input_dim, 64), nn.ReLU(),
@@ -209,6 +209,23 @@ def _backbone_to_serialisable(backbone: BackboneEncoder) -> dict:
 # ---------------------------------------------------------------------------
 # Backbone retraining
 # ---------------------------------------------------------------------------
+def _split_decay_params(module: nn.Module) -> tuple[list[nn.Parameter], list[nn.Parameter]]:
+    """Return (weight_params, bias_params) for optimizer weight-decay grouping."""
+    decay, no_decay = [], []
+    for name, p in module.named_parameters():
+        if not p.requires_grad:
+            continue
+        (no_decay if name.endswith("bias") else decay).append(p)
+    return decay, no_decay
+
+
+def _reset_optimizer_state_for(optimizer: optim.Optimizer, params) -> None:
+    """Drop Adam's m/v buffers for the given parameters."""
+    for p in params:
+        if p in optimizer.state:
+            del optimizer.state[p]
+
+
 def retrain_backbone(
     backbone: BackboneEncoder,
     reward_predictor: RewardPredictor,
@@ -216,6 +233,19 @@ def retrain_backbone(
     tuples: list[dict],
     seed: int | None = None,
 ) -> float:
+    """
+    Train backbone + reward_predictor jointly on ``tuples`` with z-scored
+    reward targets. The predictor is purely linear, so we rescale its
+    weights into z-score space at the start of the round and absorb the
+    affine rescale back into the predictor weights at the end — externally
+    the predictor still outputs raw-reward predictions, so clients are
+    unaffected, but the training loop optimises in a much better-
+    conditioned space than raw bimodal rewards in ``[-0.3, ~0.97]``.
+
+    Predictor m/v buffers are wiped at the start and end of each round
+    because the param values are rescaled out from under the optimizer.
+    Backbone Adam state stays persistent across rounds as before.
+    """
     if not tuples:
         return 0.0
 
@@ -225,24 +255,43 @@ def retrain_backbone(
     contexts = torch.tensor(
         [t["context"] for t in tuples], dtype=torch.float32, device=device
     )
-    rewards = torch.tensor(
+    rewards_raw = torch.tensor(
         [t["reward"] for t in tuples], dtype=torch.float32, device=device
     ).unsqueeze(1)
 
     n_samples = len(tuples)
-    reward_mean = float(rewards.mean().item())
-    reward_std = float(rewards.std(unbiased=False).item())
-    reward_min = float(rewards.min().item())
-    reward_max = float(rewards.max().item())
+    reward_mean = float(rewards_raw.mean().item())
+    reward_std = float(rewards_raw.std(unbiased=False).item())
+    if reward_std < 1e-6:
+        # Degenerate pool — every reward is identical, nothing to learn.
+        reward_std = 1.0
+    reward_min = float(rewards_raw.min().item())
+    reward_max = float(rewards_raw.max().item())
 
-    # Pre-training diagnostic
+    rewards_z = (rewards_raw - reward_mean) / reward_std
+
+    # Rescale predictor (Linear over backbone embedding) into z-score space:
+    #   pred_z = (pred_raw - mean) / std = (W/std) · emb + (b - mean) / std
+    # then wipe Adam's stale m/v for these params.
+    predictor_params = list(reward_predictor.parameters())
+    with torch.no_grad():
+        for name, p in reward_predictor.named_parameters():
+            if name.endswith("weight"):
+                p.div_(reward_std)
+            elif name.endswith("bias"):
+                p.sub_(reward_mean).div_(reward_std)
+    _reset_optimizer_state_for(optimizer, predictor_params)
+
+    # Pre-training diagnostic. Predictor is currently in z-score space, so
+    # bring its outputs back to raw-reward space for log comparability.
     backbone.eval()
     reward_predictor.eval()
     with torch.no_grad():
         initial_embeddings = backbone(contexts)
-        initial_predictions = reward_predictor(initial_embeddings)
-        initial_loss = nn.functional.mse_loss(initial_predictions, rewards).item()
-        initial_mae = float((initial_predictions - rewards).abs().mean().item())
+        initial_predictions_z = reward_predictor(initial_embeddings)
+        initial_predictions = initial_predictions_z * reward_std + reward_mean
+        initial_loss = nn.functional.mse_loss(initial_predictions, rewards_raw).item()
+        initial_mae = float((initial_predictions - rewards_raw).abs().mean().item())
         initial_emb_norm = float(initial_embeddings.norm(dim=1).mean().item())
 
     logger.info(
@@ -280,11 +329,11 @@ def retrain_backbone(
         for start in range(0, n_samples, RETRAIN_BATCH_SIZE):
             batch_idx = indices[start : start + RETRAIN_BATCH_SIZE]
             x_batch = contexts[batch_idx]
-            y_batch = rewards[batch_idx]
+            y_batch_z = rewards_z[batch_idx]
 
             embeddings = backbone(x_batch)
-            predictions = reward_predictor(embeddings)
-            loss = nn.functional.mse_loss(predictions, y_batch)
+            predictions_z = reward_predictor(embeddings)
+            loss = nn.functional.mse_loss(predictions_z, y_batch_z)
 
             optimizer.zero_grad()
             loss.backward()
@@ -294,12 +343,17 @@ def retrain_backbone(
             )
             optimizer.step()
 
+            # Report metrics in raw-reward space so logs and persisted
+            # ``loss_before / loss_after`` stay comparable to the old code path.
             with torch.no_grad():
-                batch_abs_err = (predictions - y_batch).abs().sum().item()
+                predictions_raw = predictions_z * reward_std + reward_mean
+                y_batch_raw = y_batch_z * reward_std + reward_mean
+                batch_abs_err = (predictions_raw - y_batch_raw).abs().sum().item()
                 epoch_abs_err_sum += float(batch_abs_err)
-                epoch_seen += y_batch.numel()
+                epoch_seen += y_batch_z.numel()
+                # MSE in raw space = MSE in z-space * std^2
+                epoch_loss += float(loss.item()) * (reward_std ** 2)
 
-            epoch_loss += float(loss.item())
             epoch_grad_norm_sum += float(grad_norm_pre_clip)
             n_batches += 1
 
@@ -317,6 +371,20 @@ def retrain_backbone(
             final_grad_norm_pre_clip,
             n_batches,
         )
+
+    # Absorb the affine z-score → raw-reward rescale back into the
+    # predictor weights so externally the predictor still maps embedding
+    # to raw reward. Reset Adam state again — param values just changed.
+    #   pred_raw = pred_z * std + mean
+    #            = (W_z · emb + b_z) * std + mean
+    #            = (W_z * std) · emb + (b_z * std + mean)
+    with torch.no_grad():
+        for name, p in reward_predictor.named_parameters():
+            if name.endswith("weight"):
+                p.mul_(reward_std)
+            elif name.endswith("bias"):
+                p.mul_(reward_std).add_(reward_mean)
+    _reset_optimizer_state_for(optimizer, predictor_params)
 
     # Post-training summary
     backbone.eval()
@@ -409,16 +477,27 @@ class CentralizedService:
         self.backbone.eval()
         self.reward_predictor.eval()
 
-        # Persistent Adam optimizer — m/v buffers carry across rounds. The
-        # parameter Tensor objects are stable (load_state_dict copies values
-        # in place), so the optimizer keeps tracking the right tensors even
-        # after try_load_persisted_state replaces their values.
+        # Persistent Adam optimizer — m/v buffers carry across rounds for the
+        # backbone. ``retrain_backbone`` deliberately wipes the predictor's
+        # m/v at each round because it rescales the predictor weights into
+        # z-score space and back, which would otherwise leave the optimizer
+        # tracking stale buffers. Param tensor identities stay stable across
+        # ``load_state_dict`` calls, so the optimizer keeps tracking the
+        # right params even after persisted weights replace their values.
+        #
+        # Weight decay is applied only to weight matrices, never to biases:
+        # decaying a bias pulls it toward 0 and fights its job of absorbing
+        # the mean reward. With decay on the predictor bias the head
+        # converges to ``mean(reward)`` only very slowly.
+        bb_decay, bb_no_decay = _split_decay_params(self.backbone)
+        pred_decay, pred_no_decay = _split_decay_params(self.reward_predictor)
         self._optimizer = optim.Adam(
             [
-                {"params": self.backbone.parameters(), "lr": RETRAIN_LR_BACKBONE},
-                {"params": self.reward_predictor.parameters(), "lr": RETRAIN_LR_PREDICTOR},
+                {"params": bb_decay,       "lr": RETRAIN_LR_BACKBONE,  "weight_decay": RETRAIN_WEIGHT_DECAY},
+                {"params": bb_no_decay,    "lr": RETRAIN_LR_BACKBONE,  "weight_decay": 0.0},
+                {"params": pred_decay,     "lr": RETRAIN_LR_PREDICTOR, "weight_decay": RETRAIN_WEIGHT_DECAY},
+                {"params": pred_no_decay,  "lr": RETRAIN_LR_PREDICTOR, "weight_decay": 0.0},
             ],
-            weight_decay=RETRAIN_WEIGHT_DECAY,
         )
 
         # Global heads
@@ -481,6 +560,32 @@ class CentralizedService:
             }
             self.reward_predictor.load_state_dict(rp_sd)
             self.reward_predictor.eval()
+
+            # Detect the legacy zero-init predictor. With zero weights the
+            # gradient flowing back to the backbone is ``W^T · residual = 0``,
+            # which is the documented root cause of the production loss never
+            # decreasing below ``Var(reward)``. Replace with Kaiming-uniform
+            # so the backbone gets a real learning signal from the first batch.
+            # ``_reset_optimizer_state_for`` isn't needed yet because the
+            # optimizer hasn't been built around these params at this point
+            # (this runs before training).
+            with torch.no_grad():
+                weight_norm_sq = sum(
+                    float(p.pow(2).sum().item())
+                    for n, p in self.reward_predictor.named_parameters()
+                    if n.endswith("weight")
+                )
+                if weight_norm_sq < 1e-12:
+                    for n, p in self.reward_predictor.named_parameters():
+                        if n.endswith("weight"):
+                            bound = float(p.shape[-1]) ** -0.5
+                            p.uniform_(-bound, bound)
+                    logger.warning(
+                        "Legacy zero-initialised reward predictor detected on "
+                        "load (version=%d). Reinitialised weights with "
+                        "Kaiming-uniform to restore backbone gradient flow.",
+                        row.version,
+                    )
 
             # Heads
             self.item_head.load_state_dict(_decode(row.item_head_blob))
@@ -591,6 +696,15 @@ class CentralizedService:
         change when ``round_triggered`` is ``True``.
         """
         tuples = decode_tuples(data)
+
+        expected_ctx_dim = self.backbone.backbone[0].in_features
+        for i, t in enumerate(tuples):
+            ctx_len = len(t.get("context", []))
+            if ctx_len != expected_ctx_dim:
+                raise ValueError(
+                    f"Tuple {i} has context_dim={ctx_len}, expected {expected_ctx_dim}. "
+                    "Client and server context vector versions are out of sync."
+                )
 
         async with self._lock:
             # Stamp each tuple with the server's current model version at upload

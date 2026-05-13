@@ -20,7 +20,7 @@ from app.db.models.centralized import CentralizedModel
 from app.db.models.federated import FederatedModel
 from app.logger import logger
 
-INPUT_DIM = 18
+INPUT_DIM = 21
 HIDDEN_DIM = 64
 OUTPUT_DIM = 32
 INITIAL_VERSION = 1
@@ -107,10 +107,25 @@ def _default_nudge_head() -> dict:
 
 
 def _default_reward_predictor() -> dict:
-    """Zero init for ``RewardPredictor`` linear layer."""
+    """
+    Kaiming-uniform init for the ``RewardPredictor`` linear layer.
+
+    Why not zero: the gradient flowing back from MSE through the predictor
+    to the backbone is ``dL/d(emb) = (pred - y) * W_pred``. With ``W_pred = 0``
+    the backbone gets no learning signal at all until the predictor weights
+    drift away from zero — and Adam normalises their noise-driven
+    gradients, so that drift is glacial in practice. Kaiming-uniform
+    matches what ``nn.Linear`` uses when no seed row exists.
+
+    Legacy key format (``net.0.*``) is preserved; ``try_load_persisted_state``
+    in ``app/backbones/centralized.py`` remaps it to the current
+    ``net.*`` shape on load.
+    """
+    rng = np.random.default_rng(43)
+    bound = float(np.sqrt(1.0 / OUTPUT_DIM))
     return {
-        "net.0.weight": np.zeros((1, OUTPUT_DIM), dtype=np.float32).tolist(),
-        "net.0.bias":   np.zeros(1, dtype=np.float32).tolist(),
+        "net.0.weight": rng.uniform(-bound, bound, size=(1, OUTPUT_DIM)).astype(np.float32).tolist(),
+        "net.0.bias":   rng.uniform(-bound, bound, size=(1,)).astype(np.float32).tolist(),
     }
 
 
