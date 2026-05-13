@@ -219,13 +219,6 @@ def _split_decay_params(module: nn.Module) -> tuple[list[nn.Parameter], list[nn.
     return decay, no_decay
 
 
-def _reset_optimizer_state_for(optimizer: optim.Optimizer, params) -> None:
-    """Drop Adam's m/v buffers for the given parameters."""
-    for p in params:
-        if p in optimizer.state:
-            del optimizer.state[p]
-
-
 def retrain_backbone(
     backbone: BackboneEncoder,
     reward_predictor: RewardPredictor,
@@ -234,17 +227,10 @@ def retrain_backbone(
     seed: int | None = None,
 ) -> float:
     """
-    Train backbone + reward_predictor jointly on ``tuples`` with z-scored
-    reward targets. The predictor is purely linear, so we rescale its
-    weights into z-score space at the start of the round and absorb the
-    affine rescale back into the predictor weights at the end — externally
-    the predictor still outputs raw-reward predictions, so clients are
-    unaffected, but the training loop optimises in a much better-
-    conditioned space than raw bimodal rewards in ``[-0.3, ~0.97]``.
-
-    Predictor m/v buffers are wiped at the start and end of each round
-    because the param values are rescaled out from under the optimizer.
-    Backbone Adam state stays persistent across rounds as before.
+    Train backbone + reward_predictor jointly on ``tuples`` using binary
+    cross-entropy (BCE) on accept/dismiss labels (reward > 0). The predictor
+    outputs a logit; BCEWithLogitsLoss applies the sigmoid internally.
+    Backbone Adam state is persistent across rounds.
     """
     if not tuples:
         return 0.0
@@ -255,56 +241,30 @@ def retrain_backbone(
     contexts = torch.tensor(
         [t["context"] for t in tuples], dtype=torch.float32, device=device
     )
-    rewards_raw = torch.tensor(
-        [t["reward"] for t in tuples], dtype=torch.float32, device=device
-    ).unsqueeze(1)
+    labels = (
+        torch.tensor([t["reward"] for t in tuples], dtype=torch.float32, device=device) > 0
+    ).float().unsqueeze(1)
 
     n_samples = len(tuples)
-    reward_mean = float(rewards_raw.mean().item())
-    reward_std = float(rewards_raw.std(unbiased=False).item())
-    if reward_std < 1e-6:
-        # Degenerate pool — every reward is identical, nothing to learn.
-        reward_std = 1.0
-    reward_min = float(rewards_raw.min().item())
-    reward_max = float(rewards_raw.max().item())
 
-    rewards_z = (rewards_raw - reward_mean) / reward_std
-
-    # Rescale predictor (Linear over backbone embedding) into z-score space:
-    #   pred_z = (pred_raw - mean) / std = (W/std) · emb + (b - mean) / std
-    # then wipe Adam's stale m/v for these params.
-    predictor_params = list(reward_predictor.parameters())
-    with torch.no_grad():
-        for name, p in reward_predictor.named_parameters():
-            if name.endswith("weight"):
-                p.div_(reward_std)
-            elif name.endswith("bias"):
-                p.sub_(reward_mean).div_(reward_std)
-    _reset_optimizer_state_for(optimizer, predictor_params)
-
-    # Pre-training diagnostic. Predictor is currently in z-score space, so
-    # bring its outputs back to raw-reward space for log comparability.
+    # Pre-training diagnostic
     backbone.eval()
     reward_predictor.eval()
     with torch.no_grad():
         initial_embeddings = backbone(contexts)
-        initial_predictions_z = reward_predictor(initial_embeddings)
-        initial_predictions = initial_predictions_z * reward_std + reward_mean
-        initial_loss = nn.functional.mse_loss(initial_predictions, rewards_raw).item()
-        initial_mae = float((initial_predictions - rewards_raw).abs().mean().item())
+        initial_logits = reward_predictor(initial_embeddings)
+        initial_loss = nn.functional.binary_cross_entropy_with_logits(
+            initial_logits, labels
+        ).item()
+        initial_acc = float(((initial_logits > 0) == labels.bool()).float().mean().item())
         initial_emb_norm = float(initial_embeddings.norm(dim=1).mean().item())
 
     logger.info(
-        "centralized_retrain start: loss=%.4f mae=%.4f emb_norm=%.3f "
-        "(%d tuples, reward_mean=%.3f, reward_std=%.3f, reward_range=[%.3f, %.3f])",
+        "centralized_retrain start: bce=%.4f acc=%.3f emb_norm=%.3f (%d tuples)",
         initial_loss,
-        initial_mae,
+        initial_acc,
         initial_emb_norm,
         n_samples,
-        reward_mean,
-        reward_std,
-        reward_min,
-        reward_max,
     )
 
     backbone.train()
@@ -313,7 +273,7 @@ def retrain_backbone(
     params = [p for group in optimizer.param_groups for p in group["params"]]
 
     final_epoch_loss = 0.0
-    final_epoch_mae = 0.0
+    final_epoch_acc = 0.0
     final_grad_norm_pre_clip = 0.0
 
     for epoch in range(RETRAIN_EPOCHS):
@@ -321,7 +281,7 @@ def retrain_backbone(
         rng.shuffle(indices)
 
         epoch_loss = 0.0
-        epoch_abs_err_sum = 0.0
+        epoch_correct = 0
         epoch_seen = 0
         epoch_grad_norm_sum = 0.0
         n_batches = 0
@@ -329,11 +289,11 @@ def retrain_backbone(
         for start in range(0, n_samples, RETRAIN_BATCH_SIZE):
             batch_idx = indices[start : start + RETRAIN_BATCH_SIZE]
             x_batch = contexts[batch_idx]
-            y_batch_z = rewards_z[batch_idx]
+            labels_batch = labels[batch_idx]
 
             embeddings = backbone(x_batch)
-            predictions_z = reward_predictor(embeddings)
-            loss = nn.functional.mse_loss(predictions_z, y_batch_z)
+            logits = reward_predictor(embeddings)
+            loss = nn.functional.binary_cross_entropy_with_logits(logits, labels_batch)
 
             optimizer.zero_grad()
             loss.backward()
@@ -343,48 +303,27 @@ def retrain_backbone(
             )
             optimizer.step()
 
-            # Report metrics in raw-reward space so logs and persisted
-            # ``loss_before / loss_after`` stay comparable to the old code path.
             with torch.no_grad():
-                predictions_raw = predictions_z * reward_std + reward_mean
-                y_batch_raw = y_batch_z * reward_std + reward_mean
-                batch_abs_err = (predictions_raw - y_batch_raw).abs().sum().item()
-                epoch_abs_err_sum += float(batch_abs_err)
-                epoch_seen += y_batch_z.numel()
-                # MSE in raw space = MSE in z-space * std^2
-                epoch_loss += float(loss.item()) * (reward_std ** 2)
+                epoch_correct += int(((logits > 0) == labels_batch.bool()).sum().item())
+                epoch_seen += labels_batch.numel()
+                epoch_loss += float(loss.item()) * labels_batch.numel()
 
             epoch_grad_norm_sum += float(grad_norm_pre_clip)
             n_batches += 1
 
-        final_epoch_loss = epoch_loss / max(n_batches, 1)
-        final_epoch_mae = epoch_abs_err_sum / max(epoch_seen, 1)
+        final_epoch_loss = epoch_loss / max(epoch_seen, 1)
+        final_epoch_acc = epoch_correct / max(epoch_seen, 1)
         final_grad_norm_pre_clip = epoch_grad_norm_sum / max(n_batches, 1)
 
         logger.info(
-            "centralized_retrain epoch %d/%d: loss=%.4f mae=%.4f grad_norm=%.3f "
-            "(%d batches)",
+            "centralized_retrain epoch %d/%d: bce=%.4f acc=%.3f grad_norm=%.3f (%d batches)",
             epoch + 1,
             RETRAIN_EPOCHS,
             final_epoch_loss,
-            final_epoch_mae,
+            final_epoch_acc,
             final_grad_norm_pre_clip,
             n_batches,
         )
-
-    # Absorb the affine z-score → raw-reward rescale back into the
-    # predictor weights so externally the predictor still maps embedding
-    # to raw reward. Reset Adam state again — param values just changed.
-    #   pred_raw = pred_z * std + mean
-    #            = (W_z · emb + b_z) * std + mean
-    #            = (W_z * std) · emb + (b_z * std + mean)
-    with torch.no_grad():
-        for name, p in reward_predictor.named_parameters():
-            if name.endswith("weight"):
-                p.mul_(reward_std)
-            elif name.endswith("bias"):
-                p.mul_(reward_std).add_(reward_mean)
-    _reset_optimizer_state_for(optimizer, predictor_params)
 
     # Post-training summary
     backbone.eval()
@@ -394,12 +333,12 @@ def retrain_backbone(
         final_emb_norm = float(final_embeddings.norm(dim=1).mean().item())
 
     logger.info(
-        "centralized_retrain done: loss %.4f -> %.4f, mae %.4f -> %.4f, "
+        "centralized_retrain done: bce %.4f -> %.4f, acc %.3f -> %.3f, "
         "emb_norm %.3f -> %.3f, avg_grad_norm=%.3f",
         initial_loss,
         final_epoch_loss,
-        initial_mae,
-        final_epoch_mae,
+        initial_acc,
+        final_epoch_acc,
         initial_emb_norm,
         final_emb_norm,
         final_grad_norm_pre_clip,
@@ -413,19 +352,21 @@ def evaluate_backbone_loss(
     reward_predictor: RewardPredictor,
     tuples: list[dict],
 ) -> float:
-    """Compute MSE loss over tuples without updating model parameters."""
+    """Compute BCE loss over tuples without updating model parameters."""
     if not tuples:
         return 0.0
 
     contexts = torch.tensor([t["context"] for t in tuples], dtype=torch.float32)
-    rewards = torch.tensor([t["reward"] for t in tuples], dtype=torch.float32).unsqueeze(1)
+    labels = (
+        torch.tensor([t["reward"] for t in tuples], dtype=torch.float32) > 0
+    ).float().unsqueeze(1)
 
     backbone.eval()
     reward_predictor.eval()
     with torch.no_grad():
         emb = backbone(contexts)
-        pred = reward_predictor(emb)
-        loss = nn.functional.mse_loss(pred, rewards)
+        logits = reward_predictor(emb)
+        loss = nn.functional.binary_cross_entropy_with_logits(logits, labels)
     return float(loss.item())
 
 
@@ -478,10 +419,7 @@ class CentralizedService:
         self.reward_predictor.eval()
 
         # Persistent Adam optimizer — m/v buffers carry across rounds for the
-        # backbone. ``retrain_backbone`` deliberately wipes the predictor's
-        # m/v at each round because it rescales the predictor weights into
-        # z-score space and back, which would otherwise leave the optimizer
-        # tracking stale buffers. Param tensor identities stay stable across
+        # backbone and predictor. Param tensor identities stay stable across
         # ``load_state_dict`` calls, so the optimizer keeps tracking the
         # right params even after persisted weights replace their values.
         #
@@ -562,13 +500,9 @@ class CentralizedService:
             self.reward_predictor.eval()
 
             # Detect the legacy zero-init predictor. With zero weights the
-            # gradient flowing back to the backbone is ``W^T · residual = 0``,
-            # which is the documented root cause of the production loss never
-            # decreasing below ``Var(reward)``. Replace with Kaiming-uniform
-            # so the backbone gets a real learning signal from the first batch.
-            # ``_reset_optimizer_state_for`` isn't needed yet because the
-            # optimizer hasn't been built around these params at this point
-            # (this runs before training).
+            # gradient flowing back to the backbone is zero, so the backbone
+            # gets no learning signal. Replace with Kaiming-uniform so the
+            # backbone gets a real gradient from the first batch.
             with torch.no_grad():
                 weight_norm_sq = sum(
                     float(p.pow(2).sum().item())
