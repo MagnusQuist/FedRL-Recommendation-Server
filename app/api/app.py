@@ -6,28 +6,20 @@ Call `create_app()` to get a fully-configured `FastAPI` instance, or import
 `app` directly (used by ASGI servers).
 """
 
-from app.logger import logger
-
 import os
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
-from app.backbones.aggregator import FLAggregator
-from app.backbones.centralized import CentralizedService
-from app.api.routers.api import router as api_router
+from app.logging import logger
+from app.ml.aggregation import FLAggregator
+from app.ml.centralized_training import CentralizedService
+from app.api.routes import router as api_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Startup sequence:
-      1. Initialise the FL aggregator and rehydrate its persisted counters.
-      2. Initialise the centralized service and rehydrate its persisted state.
-    """
     aggregator = FLAggregator()
     await aggregator.try_load_persisted_state()
     app.state.aggregator = aggregator
@@ -37,12 +29,10 @@ async def lifespan(app: FastAPI):
     app.state.centralized_service = centralized_service
 
     logger.info("Server ready.")
-
     yield
 
 
 def create_app() -> FastAPI:
-    """Create and configure the FastAPI app."""
     app = FastAPI(
         title="FedRL Recommendation Server",
         description=(
@@ -62,15 +52,6 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(api_router)
-
-    # Serve dev metrics static assets (CSS, JS, etc.) from app/web under /api/v1/dev/static
-    DEV_WEB_DIR = Path(__file__).resolve().parents[1] / "web"
-    app.mount(
-        "/api/v1/dev/static",
-        StaticFiles(directory=DEV_WEB_DIR),
-        name="dev-static",
-    )
-
     return app
 
 
