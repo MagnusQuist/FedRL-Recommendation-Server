@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import copy
 import csv
 import json
 import math
@@ -327,6 +328,7 @@ def train_one_run(
     val_split: float,
     seed: int,
     objective: str = "mse",
+    save_weights_path: Path | None = None,
 ) -> dict:
     """
     Train backbone + predictor on ``interactions``. ``objective`` selects
@@ -415,6 +417,8 @@ def train_one_run(
 
     history: list[dict] = []
     started = time.perf_counter()
+    best_val_loss = float("inf")
+    best_backbone_sd = None
 
     for epoch in range(1, epochs + 1):
         backbone.train()
@@ -513,6 +517,10 @@ def train_one_run(
             else:
                 val_mse = val_mae = val_bce = val_acc = val_loss = float("nan")
 
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_backbone_sd = copy.deepcopy(backbone.state_dict())
+
         history.append({
             "epoch": epoch,
             "train_loss": train_loss,
@@ -553,6 +561,11 @@ def train_one_run(
                     p.mul_(reward_std)
                 elif name.endswith("bias"):
                     p.mul_(reward_std).add_(reward_mean)
+
+    if save_weights_path is not None and best_backbone_sd is not None:
+        save_weights_path.parent.mkdir(parents=True, exist_ok=True)
+        np.savez(save_weights_path, **{k: v.cpu().numpy() for k, v in best_backbone_sd.items()})
+        print(f"Saved pretrained backbone weights to {save_weights_path}")
 
     elapsed = time.perf_counter() - started
     final = history[-1] if history else {}
@@ -626,7 +639,8 @@ def cmd_train(args: argparse.Namespace) -> None:
     for k, v in config.items():
         print(f"  {k} = {v}")
 
-    result = train_one_run(interactions, **config)
+    save_weights_path = Path(args.save_weights) if args.save_weights else None
+    result = train_one_run(interactions, **config, save_weights_path=save_weights_path)
 
     run_name = args.run_name or f"run_{int(time.time())}"
     out = (
@@ -722,6 +736,141 @@ def cmd_compare(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Plot subcommand
+# ---------------------------------------------------------------------------
+def cmd_plot(args: argparse.Namespace) -> None:
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        raise SystemExit("matplotlib is required for plotting: pip install matplotlib")
+
+    results_path = Path(args.results)
+    with results_path.open(encoding="utf-8") as f:
+        data = json.load(f)
+
+    h = data["history"]
+    epochs    = [e["epoch"]     for e in h]
+    train_bce = [e["train_bce"] for e in h]
+    val_bce   = [e["val_bce"]   for e in h]
+    train_acc = [e["train_acc"] for e in h]
+    val_acc   = [e["val_acc"]   for e in h]
+    emb_norm  = [e["emb_norm"]  for e in h]
+    grad_norm = [e["grad_norm"] for e in h]
+
+    stats         = data["reward_stats"]
+    entropy_floor = stats["entropy_floor"]
+    accept_rate   = stats["accept_rate"]
+    majority_base = max(accept_rate, 1 - accept_rate)
+    best          = data["best_val"]
+    best_epoch    = best["epoch"]
+    best_val_bce  = best["val_bce"]
+    best_val_acc  = best["val_acc"]
+    run_name      = data.get("run_name", results_path.stem)
+    cfg           = data.get("config", {})
+    n_total       = data.get("n_total", "?")
+    n_train       = data.get("n_train", "?")
+    n_val         = data.get("n_val", "?")
+
+    BLUE   = "#2563EB"
+    ORANGE = "#EA580C"
+    GRAY   = "#6B7280"
+    GREEN  = "#16A34A"
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 9))
+    fig.suptitle(
+        f"Centralized Backbone Training — 21-dim Context, BCE Objective\n"
+        f"{run_name}  |  {n_total} tuples  |  {n_train} train / {n_val} val  |  "
+        f"{cfg.get('epochs', '?')} epochs",
+        fontsize=13, fontweight="bold", y=0.98,
+    )
+
+    # ── BCE Loss ──────────────────────────────────────────────────────────────
+    ax = axes[0, 0]
+    ax.plot(epochs, train_bce, color=BLUE,   lw=2, label="Train BCE")
+    ax.plot(epochs, val_bce,   color=ORANGE, lw=2, label="Val BCE")
+    ax.axhline(entropy_floor, color=GRAY, lw=1.5, ls="--",
+               label=f"Entropy floor = {entropy_floor:.3f}")
+    ax.axvline(best_epoch, color=GREEN, lw=1, ls=":", alpha=0.8)
+    ax.annotate(
+        f"Best val\n epoch {best_epoch}\n BCE={best_val_bce:.3f}",
+        xy=(best_epoch, best_val_bce),
+        xytext=(best_epoch + max(1, len(epochs) // 12), best_val_bce + 0.04),
+        fontsize=8, color=GREEN,
+        arrowprops=dict(arrowstyle="->", color=GREEN, lw=1),
+    )
+    ax.fill_between(epochs, val_bce, entropy_floor,
+                    where=[v < entropy_floor for v in val_bce],
+                    alpha=0.12, color=GREEN, label="Gap below floor")
+    ax.set_xlabel("Epoch"); ax.set_ylabel("BCE Loss")
+    ax.set_title("BCE Loss over Training")
+    ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
+    ax.text(0.97, 0.97,
+            "Lower is better.\nEntropy floor = loss of a model\nthat always predicts the class mean.",
+            transform=ax.transAxes, fontsize=7.5, va="top", ha="right",
+            bbox=dict(boxstyle="round", fc="white", alpha=0.7))
+
+    # ── Accuracy ──────────────────────────────────────────────────────────────
+    ax = axes[0, 1]
+    ax.plot(epochs, train_acc, color=BLUE,   lw=2, label="Train Accuracy")
+    ax.plot(epochs, val_acc,   color=ORANGE, lw=2, label="Val Accuracy")
+    ax.axhline(majority_base, color=GRAY, lw=1.5, ls="--",
+               label=f"Majority-class baseline = {majority_base:.3f}")
+    ax.fill_between(epochs, val_acc, majority_base,
+                    where=[v > majority_base for v in val_acc],
+                    alpha=0.12, color=GREEN, label="Gain above baseline")
+    ax.annotate(
+        f"Val acc = {best_val_acc:.3f}\nat best epoch",
+        xy=(best_epoch, best_val_acc),
+        xytext=(best_epoch + max(1, len(epochs) // 12), best_val_acc - 0.03),
+        fontsize=8, color=GREEN,
+        arrowprops=dict(arrowstyle="->", color=GREEN, lw=1),
+    )
+    ax.set_xlabel("Epoch"); ax.set_ylabel("Accuracy")
+    ax.set_title("Classification Accuracy over Training")
+    ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
+    ax.text(0.97, 0.03,
+            "Majority-class baseline = accuracy of\nalways predicting the most frequent class.",
+            transform=ax.transAxes, fontsize=7.5, va="bottom", ha="right",
+            bbox=dict(boxstyle="round", fc="white", alpha=0.7))
+
+    # ── Embedding Norm ────────────────────────────────────────────────────────
+    ax = axes[1, 0]
+    ax.plot(epochs, emb_norm, color=BLUE, lw=2)
+    ax.set_xlabel("Epoch"); ax.set_ylabel("Mean L2 Norm")
+    ax.set_title("Backbone Embedding Norm")
+    ax.grid(True, alpha=0.3)
+    ax.text(0.97, 0.97,
+            "How large the backbone's output vectors are.\n"
+            "Rising norm = backbone is actively updating.\n"
+            "Flat norm = backbone has stopped learning.",
+            transform=ax.transAxes, fontsize=7.5, va="top", ha="right",
+            bbox=dict(boxstyle="round", fc="white", alpha=0.7))
+
+    # ── Gradient Norm ─────────────────────────────────────────────────────────
+    ax = axes[1, 1]
+    ax.plot(epochs, grad_norm, color=ORANGE, lw=2)
+    ax.axhline(cfg.get("grad_clip", 1.0), color=GRAY, lw=1.5, ls="--",
+               label=f"Clip threshold = {cfg.get('grad_clip', 1.0)}")
+    ax.set_xlabel("Epoch"); ax.set_ylabel("Gradient Norm (pre-clip)")
+    ax.set_title("Gradient Norm over Training")
+    ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
+    ax.text(0.97, 0.97,
+            "Size of the gradient before clipping.\n"
+            "Staying below 1.0 = gradients are healthy.\n"
+            "Gradual rise = model is actively learning.",
+            transform=ax.transAxes, fontsize=7.5, va="top", ha="right",
+            bbox=dict(boxstyle="round", fc="white", alpha=0.7))
+
+    plt.tight_layout()
+    out = Path(args.out) if args.out else results_path.with_suffix(".png")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out, dpi=150, bbox_inches="tight")
+    print(f"Saved plot to {out}")
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 def main() -> None:
@@ -758,11 +907,21 @@ def main() -> None:
                    help="Tag for this run; default = run_<unix-timestamp>.")
     t.add_argument("--out", default=None,
                    help="Output results JSON path (default: results/<run-name>.json).")
+    t.add_argument("--save-weights", default=None, metavar="PATH",
+                   help="If set, save the best-val backbone weights as a .npz file "
+                        "at this path (e.g. app/db/seeding/data/pretrained/pretrained_backbone_weights.npz). "
+                        "The server's seed_backbone.py loads from this path on startup.")
     t.set_defaults(func=cmd_train)
 
     c = sub.add_parser("compare", help="Compare multiple results JSONs in a table.")
     c.add_argument("runs", nargs="+", help="Paths to results JSON files.")
     c.set_defaults(func=cmd_compare)
+
+    p = sub.add_parser("plot", help="Plot training curves from a results JSON.")
+    p.add_argument("results", help="Path to a results JSON produced by the train subcommand.")
+    p.add_argument("--out", default=None,
+                   help="Output image path (default: same path as results JSON with .png extension).")
+    p.set_defaults(func=cmd_plot)
 
     args = parser.parse_args()
     args.func(args)
