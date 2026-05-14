@@ -147,9 +147,7 @@ app/
   schemas/                 # Pydantic schemas
   services/                # catalogue and snapshot services
   static/                  # food item and product label images
-docker/
-  server.Dockerfile
-  pretrain.Dockerfile
+Dockerfile.server
 docs/
   api.md
 tests/
