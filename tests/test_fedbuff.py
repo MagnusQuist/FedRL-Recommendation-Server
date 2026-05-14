@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from app.ml.fedbuff import aggregate_fedbuff
+from app.ml.federated.fedbuff import aggregate_fedbuff
 
 
 @dataclass

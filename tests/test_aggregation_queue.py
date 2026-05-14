@@ -1,6 +1,6 @@
 import unittest
 
-from app.ml import aggregation
+from app.ml.federated import aggregation
 
 
 class AggregationQueueTests(unittest.IsolatedAsyncioTestCase):

@@ -13,8 +13,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.logging import logger
-from app.ml.aggregation import FLAggregator
-from app.ml.centralized_training import CentralizedService
+from app.ml.centralized.training import CentralizedService
+from app.ml.federated.aggregation import FLAggregator
 from app.api.routes import router as api_router
 
 

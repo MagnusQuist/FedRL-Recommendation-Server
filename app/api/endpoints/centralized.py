@@ -1,9 +1,7 @@
-import os
-
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
 
-from app.ml.centralized_training import CentralizedService
+from app.ml.centralized.training import CLIENTS_PER_ROUND, CentralizedService
 from app.schemas.training import (
     CentralizedModelDownload,
     CentralizedTrainingStatus,
@@ -11,8 +9,6 @@ from app.schemas.training import (
     InteractionUpload,
 )
 from app.logging import logger
-
-CLIENTS_PER_ROUND = int(os.getenv("CENTRALIZED_CLIENTS_PER_ROUND", "2"))
 
 router = APIRouter(prefix="/centralized")
 

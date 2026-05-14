@@ -48,7 +48,7 @@ class BackboneUpload(BaseModel):
         logger.info("Trying to validate backbone blob")
         if isinstance(v, str):
             try:
-                from app.ml.aggregation import decode_backbone_blob as _decode
+                from app.ml.federated.aggregation import decode_backbone_blob as _decode
                 decoded = _decode(v)
             except Exception as e:
                 logger.error(e)
@@ -96,7 +96,7 @@ class RoundStatus(BaseModel):
     current_version: int = Field(..., ge=0, description="Latest stored backbone version; 0 if none seeded yet.")
     queued_clients: list[str]
     total_rounds_completed: int = Field(..., ge=0)
-    clients_per_round: int = Field(..., ge=1, description="Exact number of unique clients required to trigger a FedAvg round.")
+    clients_per_round: int = Field(..., ge=1, description="Exact number of unique clients required to trigger a FedBuff round.")
 
 
 # ── Centralized schemas ──────────────────────────────────────────────────────

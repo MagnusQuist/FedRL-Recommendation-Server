@@ -16,12 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import AggregationEvent, FederatedModel
 from app.db.session import AsyncSessionLocal
 from app.logging import logger
-from app.ml.backbone_codec import (
+from app.ml.federated.backbone_codec import (
     decode_backbone_arrays,
     decode_backbone_blob as decode_backbone_blob,
     encode_backbone_blob,
 )
-from app.ml.fedbuff import aggregate_fedbuff
+from app.ml.federated.fedbuff import aggregate_fedbuff
 
 
 CLIENTS_PER_ROUND = int(os.getenv("FEDERATED_CLIENTS_PER_ROUND", "2"))

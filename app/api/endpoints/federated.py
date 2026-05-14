@@ -5,7 +5,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.db.models import AggregationEvent
-from app.ml.aggregation import CLIENTS_PER_ROUND, FLAggregator, decode_backbone_blob
+from app.ml.federated.aggregation import (
+    CLIENTS_PER_ROUND,
+    FLAggregator,
+    decode_backbone_blob,
+)
 from app.schemas.training import BackboneDownload, BackboneUpload, RoundStatus, UploadAck
 from app.logging import logger
 
@@ -73,7 +77,7 @@ async def download_backbone(
     "/model",
     response_model=UploadAck,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Upload backbone weights for FedAvg aggregation",
+    summary="Upload backbone weights for FedBuff aggregation",
 )
 async def upload_backbone(
     payload: BackboneUpload,

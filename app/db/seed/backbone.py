@@ -106,14 +106,12 @@ def _default_reward_predictor() -> dict:
 
     With zero weights the backbone gets no learning signal at all until the predictor
     weights drift away from zero. Kaiming-uniform matches what nn.Linear uses.
-    Legacy key format (net.0.*) is preserved; try_load_persisted_state remaps it
-    to the current net.* shape on load.
     """
     rng = np.random.default_rng(43)
     bound = float(np.sqrt(1.0 / OUTPUT_DIM))
     return {
-        "net.0.weight": rng.uniform(-bound, bound, size=(1, OUTPUT_DIM)).astype(np.float32).tolist(),
-        "net.0.bias":   rng.uniform(-bound, bound, size=(1,)).astype(np.float32).tolist(),
+        "net.weight": rng.uniform(-bound, bound, size=(1, OUTPUT_DIM)).astype(np.float32).tolist(),
+        "net.bias":   rng.uniform(-bound, bound, size=(1,)).astype(np.float32).tolist(),
     }
 
 

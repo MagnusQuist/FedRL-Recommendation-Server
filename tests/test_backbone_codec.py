@@ -5,7 +5,7 @@ import unittest
 
 import numpy as np
 
-from app.ml.backbone_codec import (
+from app.ml.federated.backbone_codec import (
     decode_backbone_arrays,
     decode_backbone_blob,
     encode_backbone_blob,
