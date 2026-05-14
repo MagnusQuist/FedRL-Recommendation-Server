@@ -23,7 +23,7 @@ services:
     container_name: fedrl_seed
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL to the RDS connection string}
-    command: ["python", "-m", "app.db.seeding"]
+    command: ["python", "-m", "app.db.seed"]
     restart: "no"
 
   # ── FastAPI server ──────────────────────────────────────────────────────────

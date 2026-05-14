@@ -46,7 +46,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-fedrl}:${POSTGRES_PASSWORD:-fedrl}@postgres:5432/${POSTGRES_DB:-fedrl}
-    command: ["python", "-m", "app.db.seeding"]
+    command: ["python", "-m", "app.db.seed"]
     restart: "no"
     networks:
       - fedrl_network
