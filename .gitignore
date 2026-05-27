@@ -216,3 +216,5 @@ food_item_sorting/
 # Load test results
 load-test/results/
 server_urls.json
+
+CLAUDE.md

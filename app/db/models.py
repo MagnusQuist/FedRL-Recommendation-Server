@@ -247,6 +247,13 @@ class AggregationEvent(Base):
     logged_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
     )
+    aggregation_round: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    previous_global_model_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    backbone_update_norm_l2: Mapped[float | None] = mapped_column(Float, nullable=True)
+    backbone_relative_update_norm_l2: Mapped[float | None] = mapped_column(Float, nullable=True)
+    mean_client_update_norm: Mapped[float | None] = mapped_column(Float, nullable=True)
+    std_client_update_norm: Mapped[float | None] = mapped_column(Float, nullable=True)
+    aggregation_threshold_k: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (Index("idx_aggregation_events_timestamp", "timestamp"),)
 
@@ -273,5 +280,10 @@ class CentralizedTrainingEvent(Base):
     logged_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
     )
+    training_round: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_training_interactions: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    bce_loss_improvement: Mapped[float | None] = mapped_column(Float, nullable=True)
+    model_update_norm_l2: Mapped[float | None] = mapped_column(Float, nullable=True)
+    model_relative_update_norm_l2: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     __table_args__ = (Index("idx_centralized_training_events_timestamp", "timestamp"),)

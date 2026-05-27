@@ -29,6 +29,16 @@ SERVER_LR = float(os.getenv("FEDERATED_SERVER_LR", "1.0"))
 STALENESS_ALPHA = float(os.getenv("FEDERATED_STALENESS_ALPHA", "0.5"))
 
 
+def _flat_l2_norm(weights: dict[str, np.ndarray]) -> float:
+    """L2 norm of all parameter tensors concatenated into one vector."""
+    return float(np.sqrt(sum(np.sum(v.astype(np.float64) ** 2) for v in weights.values())))
+
+
+def _diff_l2_norm(a: dict[str, np.ndarray], b: dict[str, np.ndarray]) -> float:
+    """L2 norm of (a[k] - b[k]) across all parameter tensors."""
+    return float(np.sqrt(sum(np.sum((a[k].astype(np.float64) - b[k].astype(np.float64)) ** 2) for k in a)))
+
+
 @dataclass
 class QueuedUpload:
     client_id: str
@@ -232,8 +242,20 @@ class FLAggregator:
                 SERVER_LR,
                 STALENESS_ALPHA,
             )
-            blob = encode_backbone_blob(new_weights)
             duration_ms = int(round((time.perf_counter() - start_perf) * 1000))
+
+            backbone_update_norm = _diff_l2_norm(new_weights, current_weights)
+            prev_norm = _flat_l2_norm(current_weights)
+            backbone_relative_update_norm = backbone_update_norm / prev_norm if prev_norm > 0.0 else 0.0
+
+            client_norms = [
+                _diff_l2_norm(base_weights_by_version[upload.backbone_version], upload.weights)
+                for upload in eligible
+            ]
+            mean_client_norm = float(np.mean(client_norms))
+            std_client_norm = float(np.std(client_norms))
+
+            blob = encode_backbone_blob(new_weights)
 
             next_version = await self._next_version(db)
             new_backbone = FederatedModel(version=next_version, weights_blob=blob)
@@ -251,6 +273,13 @@ class FLAggregator:
                     model_version_after=str(next_version),
                     model_size_bytes=len(blob.encode("utf-8")),
                     logged_at=datetime.now(timezone.utc),
+                    aggregation_round=self._rounds_completed + 1,
+                    previous_global_model_version=current_version,
+                    backbone_update_norm_l2=backbone_update_norm,
+                    backbone_relative_update_norm_l2=backbone_relative_update_norm,
+                    mean_client_update_norm=mean_client_norm,
+                    std_client_update_norm=std_client_norm,
+                    aggregation_threshold_k=CLIENTS_PER_ROUND,
                 )
             )
 

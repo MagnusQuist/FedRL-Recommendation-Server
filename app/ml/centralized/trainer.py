@@ -17,6 +17,24 @@ RETRAIN_BATCH_SIZE = 64
 RETRAIN_GRAD_CLIP = 1.0
 
 
+def flat_l2_norm_state_dict(state: dict[str, torch.Tensor]) -> float:
+    """L2 norm of all parameter tensors in a state_dict flattened into one vector."""
+    total = sum(t.detach().cpu().double().pow(2).sum().item() for t in state.values())
+    return float(total ** 0.5)
+
+
+def diff_l2_norm_state_dict(
+    before: dict[str, torch.Tensor],
+    after: dict[str, torch.Tensor],
+) -> float:
+    """L2 norm of (after[k] - before[k]) across all parameter tensors."""
+    total = sum(
+        (after[k].detach().cpu().double() - before[k].detach().cpu().double()).pow(2).sum().item()
+        for k in before
+    )
+    return float(total ** 0.5)
+
+
 def retrain_backbone(
     backbone: BackboneEncoder,
     reward_predictor: RewardPredictor,

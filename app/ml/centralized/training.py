@@ -29,7 +29,9 @@ from app.ml.centralized.heads import (
 )
 from app.ml.centralized.models import BackboneEncoder, RewardPredictor, build_optimizer
 from app.ml.centralized.trainer import (
+    diff_l2_norm_state_dict,
     evaluate_backbone_loss,
+    flat_l2_norm_state_dict,
     retrain_backbone,
     reward_stats,
 )
@@ -185,6 +187,15 @@ class CentralizedService:
                 interaction,
             )
 
+        # Snapshot backbone + reward_predictor weights before training (cloned, detached, on CPU)
+        state_before = {
+            k: v.clone().detach().cpu()
+            for k, v in {
+                **self.backbone.state_dict(),
+                **self.reward_predictor.state_dict(),
+            }.items()
+        }
+
         train_loss_last_epoch = await asyncio.to_thread(
             retrain_backbone,
             self.backbone,
@@ -192,6 +203,23 @@ class CentralizedService:
             self._optimizer,
             self._tuple_pool,
         )
+
+        # Collect post-training weights; detach to CPU for norm arithmetic
+        state_after = {
+            k: v.detach().cpu()
+            for k, v in {
+                **self.backbone.state_dict(),
+                **self.reward_predictor.state_dict(),
+            }.items()
+        }
+        # ||w_after - w_before||₂ — magnitude of the weight shift this round
+        model_update_norm = diff_l2_norm_state_dict(state_before, state_after)
+        # Relative shift: normalised by pre-training model scale
+        pre_training_norm = flat_l2_norm_state_dict(state_before)
+        model_relative_update_norm = (
+            model_update_norm / pre_training_norm if pre_training_norm > 0.0 else 0.0
+        )
+
         loss_after = evaluate_backbone_loss(
             self.backbone,
             self.reward_predictor,
@@ -204,12 +232,15 @@ class CentralizedService:
         elapsed_cpu = time.process_time() - started_cpu
         training_duration_ms = int(round(elapsed_wall * 1000))
         loss_delta = float(loss_after - loss_before)
+        # Positive when loss decreased (model improved)
+        bce_loss_improvement = float(loss_before - loss_after)
 
         model_version_before = self.model_version
         self.model_version += 1
         await self._persist_to_db(
             client_count=batch_clients,
             num_interactions=len(batch_tuples),
+            total_training_interactions=len(self._tuple_pool),
             contributing_client_ids=sorted(self._pending_uploads.keys()),
             training_duration_ms=training_duration_ms,
             model_version_before=model_version_before,
@@ -220,6 +251,10 @@ class CentralizedService:
             loss_before=loss_before,
             loss_after=loss_after,
             loss_delta=loss_delta,
+            bce_loss_improvement=bce_loss_improvement,
+            model_update_norm_l2=model_update_norm,
+            model_relative_update_norm_l2=model_relative_update_norm,
+            training_round=self._rounds_completed + 1,
             timestamp=round_started_at,
         )
 
@@ -310,6 +345,7 @@ class CentralizedService:
         self,
         client_count: int,
         num_interactions: int,
+        total_training_interactions: int,
         contributing_client_ids: list[str],
         training_duration_ms: int,
         model_version_before: int,
@@ -318,6 +354,10 @@ class CentralizedService:
         loss_before: float,
         loss_after: float | None,
         loss_delta: float | None,
+        bce_loss_improvement: float | None,
+        model_update_norm_l2: float | None,
+        model_relative_update_norm_l2: float | None,
+        training_round: int | None,
         timestamp: datetime,
     ) -> None:
         blobs = self._model_blobs()
@@ -345,6 +385,11 @@ class CentralizedService:
                 model_version_after=str(self.model_version),
                 model_size_bytes=model_size_bytes,
                 logged_at=datetime.now(timezone.utc),
+                training_round=training_round,
+                total_training_interactions=total_training_interactions,
+                bce_loss_improvement=bce_loss_improvement,
+                model_update_norm_l2=model_update_norm_l2,
+                model_relative_update_norm_l2=model_relative_update_norm_l2,
             ))
 
             logger.info(
